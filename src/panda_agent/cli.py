@@ -47,7 +47,13 @@ def _parse_slash_command(text: str) -> tuple[str, str]:
 
 
 def _cmd_memory_tidy(tui: TUI, memory: MemoryClient, llm_callback) -> None:
-    """Review all memory nodes, use LLM to decide what to keep/delete.
+    """Review and refine all memory nodes using LLM.
+
+    For each node, LLM chooses one of:
+    - refine: extract valuable essence, replace verbose content with concise knowledge
+    - merge: combine with another node (content is duplicated or overlapping)
+    - delete: noise/trivial/outdated, no value
+    - keep: already good as-is
 
     Called when user types /memory in chat.
     """
@@ -62,31 +68,45 @@ def _cmd_memory_tidy(tui: TUI, memory: MemoryClient, llm_callback) -> None:
 
     tui.info(f"Reviewing {len(nodes)} memory nodes...")
 
-    # Build a review prompt for the LLM
     import json
+    # Send FULL content (not truncated) — LLM needs to see everything to refine
     node_summary = []
     for n in nodes:
-        content_preview = n["content"][:200]
         node_summary.append({
             "id": n["id"],
             "title": n["title"],
-            "content": content_preview,
+            "content": n["content"],  # full content, not truncated
             "source": n["source"],
+            "node_type": n["node_type"],
         })
 
     review_prompt = (
-        "You are a memory curator. Review these memory nodes from a graph memory.\n"
-        "For each node, decide: KEEP (useful knowledge/preference/experience) or DELETE (noise/duplicate/trivial/outdated).\n"
-        "Return a JSON array: [{\"id\": \"...\", \"action\": \"keep\"|\"delete\", \"reason\": \"...\"}]\n"
-        "Be conservative — only delete clearly useless nodes.\n\n"
-        f"Nodes to review:\n{json.dumps(node_summary, ensure_ascii=False, indent=2)}"
+        "你是一个记忆整理专家。审查以下图式记忆节点，对每个节点选择一个操作：\n\n"
+        "操作类型：\n"
+        "- refine: 内容冗长/是对话记录/包含大量叙述 → 提取核心知识（技术栈、关键参数、定义、原理、经验教训），"
+        "用简洁的结构化文本替换原内容。保留所有具体数字、路径、命令、参数。\n"
+        "- merge: 与另一个节点内容重复或高度重叠 → 合并为一个，指定保留的id和合并后的内容。\n"
+        "- delete: 噪声/琐碎/过时/无价值 → 删除。\n"
+        "- keep: 已经简洁有用 → 保持不变。\n\n"
+        "refine 示例：\n"
+        "  原始: '用户问了个问题，我试了好几种方法，先用了ls，然后用了dir，发现是Windows系统...' (300字对话记录)\n"
+        "  提炼: 'panda agent 在 Windows 上使用 dir 而非 ls。OS 检测: echo %OS% 返回 Windows_NT。' (30字知识)\n\n"
+        "返回 JSON 数组:\n"
+        '[{"id": "...", "action": "refine"|"merge"|"delete"|"keep", "new_content": "...(refine/merge时必填)", "merge_into": "...(merge时必填，目标id)", "reason": "..."}]\n\n'
+        "关键原则：\n"
+        "1. refine 时保留所有具体数字、路径、命令、参数、错误信息\n"
+        "2. 去掉对话叙述（'用户问了'、'我尝试了'、'然后发现'），只留知识点\n"
+        "3. 技术栈/环境信息 → 用 key: value 格式\n"
+        "4. 经验教训 → 用因果句式（'X 导致 Y，应该 Z'）\n"
+        "5. 定义/原理 → 用简洁陈述句\n\n"
+        f"待审查节点 ({len(node_summary)} 个):\n{json.dumps(node_summary, ensure_ascii=False, indent=2)}"
     )
 
     # Call LLM for review
     from .llm import call_llm_detailed
     config = load_config()
     messages = [
-        {"role": "system", "content": "You are a memory curator. Respond ONLY with JSON."},
+        {"role": "system", "content": "你是记忆整理专家。只返回 JSON 数组，不要其他文字。"},
         {"role": "user", "content": review_prompt},
     ]
 
@@ -106,23 +126,53 @@ def _cmd_memory_tidy(tui: TUI, memory: MemoryClient, llm_callback) -> None:
 
         decisions = json.loads(json_match.group(0))
         kept = 0
+        refined = 0
+        merged = 0
         deleted = 0
+
         for d in decisions:
             nid = d.get("id", "")
             action = d.get("action", "keep")
             reason = d.get("reason", "")
+            new_content = d.get("new_content", "")
 
-            if action == "delete" and nid:
-                # Verify node exists before deleting
+            if action == "refine" and nid and new_content:
+                # Update node content with refined version
+                engine = memory._mem._engine
+                if nid in engine.graph.nodes:
+                    old_len = len(engine.graph.nodes[nid].get("content", ""))
+                    engine.update_node(nid, content=new_content)
+                    engine.save()
+                    new_len = len(new_content)
+                    refined += 1
+                    tui.event("memory_tidy",
+                              f"  ✏ Refined: {nid[:8]}... ({old_len}→{new_len} chars) — {reason[:60]}")
+
+            elif action == "merge" and nid:
+                merge_into = d.get("merge_into", "")
+                if merge_into and merge_into != nid:
+                    # Append content to target, then delete source
+                    engine = memory._mem._engine
+                    if nid in engine.graph.nodes and merge_into in engine.graph.nodes:
+                        target_content = engine.graph.nodes[merge_into].get("content", "")
+                        merged_content = target_content + "\n\n" + new_content if new_content else target_content
+                        engine.update_node(merge_into, content=merged_content)
+                        engine.delete_node(nid)
+                        engine.save()
+                        merged += 1
+                        tui.event("memory_tidy",
+                                  f"  🔗 Merged: {nid[:8]}... → {merge_into[:8]}... — {reason[:60]}")
+
+            elif action == "delete" and nid:
                 if memory.delete_by_id(nid):
                     deleted += 1
-                    tui.event("memory_tidy", f"  🗑 Deleted: {nid[:8]}... — {reason[:80]}")
-                else:
-                    tui.event("memory_tidy", f"  ⚠ Could not delete: {nid[:8]}...")
+                    tui.event("memory_tidy", f"  🗑 Deleted: {nid[:8]}... — {reason[:60]}")
+
             else:
                 kept += 1
 
-        tui.info(f"Done: {kept} kept, {deleted} deleted. Memory now has {len(nodes) - deleted} nodes.")
+        tui.info(f"Done: {kept} kept, {refined} refined, {merged} merged, {deleted} deleted. "
+                 f"Memory now has {len(nodes) - deleted} nodes.")
 
     except Exception as e:
         tui.info(f"Memory tidy failed: {e}")
@@ -146,7 +196,7 @@ def _handle_slash_command(text: str, tui: TUI, memory: MemoryClient, config) -> 
         return True
 
     if cmd == "help":
-        tui.info("Commands: /memory (tidy memory), /stats (memory stats), /help, /clear (clear screen), exit")
+        tui.info("Commands: /memory (整理记忆:提炼/合并/删除), /stats (记忆统计), /help, /clear, exit")
         return True
 
     if cmd == "clear":
