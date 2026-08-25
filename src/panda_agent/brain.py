@@ -119,6 +119,7 @@ CRITICAL RULES — VIOLATING THESE IS A FAILURE:
 4. If the user asks to list/read/show files, you MUST call a file system tool (e.g., list_directory, execute_command with `ls`) before producing your final answer.
 5. Detect the operating system before running OS-specific commands so you use the correct syntax.
 6. If a tool call fails, analyze the error and retry with a corrected approach. Only after exhausting retries should you report the failure — and even then, report the actual error, not "completed".
+7. To create or write files, you MUST use the write_file tool. Never output DONE: for a file-writing task without calling write_file first. The user must see the file on disk.
 
 ReAct Workflow:
 - Thought: reason about what tool to call next.
