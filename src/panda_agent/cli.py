@@ -174,7 +174,7 @@ def cmd_config(args):
 
 def cmd_evolve(args):
     """Handle evolve command."""
-    from .orchestrator import run_evolution
+    from .orchestrator import run_evolution, Executor
     from .types import Task
 
     config = load_config()
@@ -184,8 +184,33 @@ def cmd_evolve(args):
     def on_event(ev):
         tui.event(ev.type, ev.message)
 
+    # Build executor with reasoning callback so evolve mode
+    # also shows the model's thinking process.
+    executor = Executor(config)
+
+    # Monkey-patch executor.execute to forward reasoning to TUI
+    _orig_execute = executor.execute
+    def execute_with_reasoning(task):
+        from .react import run_react
+        result = run_react(
+            task.instruction,
+            config,
+            on_event=None,
+            on_reasoning=lambda label, text: tui.reasoning(label, text),
+            memory=executor.memory,
+        )
+        from .types import ExecutionResult
+        return ExecutionResult(
+            output_path="",
+            tool_calls=result.tool_calls,
+            success=result.success,
+            error=result.error,
+            trace=result.trace,
+        )
+    executor.execute = execute_with_reasoning
+
     result = run_evolution(
-        executor=None,  # Will use default
+        executor=executor,
         evaluator=None,
         learner=None,
         improver=None,
@@ -195,7 +220,8 @@ def cmd_evolve(args):
         on_event=on_event,
     )
 
-    tui.print(f"\nRounds: {len(result.rounds)}, Score: {result.final_score}, Patches: {result.total_patches}")
+    tui.print(f"\nRounds: {len(result.rounds)}, Score: {result.final_score}, "
+              f"Patches: {result.total_patches}, Lessons: {result.total_lessons}")
 
 
 def cmd_memory(args):
