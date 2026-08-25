@@ -126,17 +126,53 @@ def _tool_run_command(command: str, timeout: int = 60, **kw) -> str:
 
 
 def _tool_patch_file(path: str, old_string: str, new_string: str, **kw) -> str:
-    """Find and replace text in a file."""
+    """Find and replace text in a file with fuzzy matching.
+
+    Tries exact match first, then falls back to:
+    1. Strip leading/trailing whitespace on both sides
+    2. Tab→space normalization (4 spaces)
+    3. Line ending normalization (CRLF→LF)
+    """
     try:
         p = Path(path)
         if not p.exists():
             return f"Error: file not found: {path}"
         content = p.read_text(encoding="utf-8")
-        if old_string not in content:
-            return f"Error: old_string not found in {path}"
-        new_content = content.replace(old_string, new_string, 1)
-        p.write_text(new_content, encoding="utf-8")
-        return f"Patched {path}: replaced {len(old_string)} chars with {len(new_string)} chars"
+
+        # Try exact match first
+        if old_string in content:
+            new_content = content.replace(old_string, new_string, 1)
+            p.write_text(new_content, encoding="utf-8")
+            return f"Patched {path}: replaced {len(old_string)} chars with {len(new_string)} chars"
+
+        # Fuzzy strategy 1: strip whitespace per line on both sides
+        old_stripped = "\n".join(line.strip() for line in old_string.split("\n"))
+        content_stripped_lines = [line.strip() for line in content.split("\n")]
+        content_stripped = "\n".join(content_stripped_lines)
+        if old_stripped in content_stripped:
+            idx = content_stripped.index(old_stripped)
+            new_content_stripped = content_stripped[:idx] + new_string + content_stripped[idx + len(old_stripped):]
+            p.write_text(new_content_stripped, encoding="utf-8")
+            return f"Patched {path}: fuzzy match (whitespace), {len(old_string)}->{len(new_string)} chars"
+
+        # Fuzzy strategy 2: tab→space normalization (4 spaces)
+        old_tabs = old_string.replace("\t", "    ")
+        content_tabs = content.replace("\t", "    ")
+        if old_tabs in content_tabs:
+            new_content = content_tabs.replace(old_tabs, new_string, 1)
+            p.write_text(new_content, encoding="utf-8")
+            return f"Patched {path}: fuzzy match (tab→space), {len(old_string)}→{len(new_string)} chars"
+
+        # Fuzzy strategy 3: line ending normalization (CRLF -> LF)
+        crlf = chr(13) + chr(10)
+        old_lf = old_string.replace(crlf, chr(10))
+        content_lf = content.replace(crlf, chr(10))
+        if old_lf in content_lf:
+            new_content = content_lf.replace(old_lf, new_string, 1)
+            p.write_text(new_content, encoding="utf-8")
+            return f"Patched {path}: fuzzy match (line endings), {len(old_string)}→{len(new_string)} chars"
+
+        return f"Error: old_string not found in {path} (tried exact + 3 fuzzy strategies)"
     except Exception as e:
         return f"Error patching file: {e}"
 
