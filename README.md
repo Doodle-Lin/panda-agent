@@ -1,63 +1,151 @@
-# PandaAgent — Generic 3-Agent Self-Evolution Framework
+# PandaAgent — Self-Evolving AI Agent
 
-A framework where three agents form a closed loop to iteratively improve
-their own tool code through real-world execution, evaluation, and
-LLM-driven code patching.
+An AI agent that gets better with use. Three-layer self-evolution architecture
+embedded in daily tasks — not a separate training mode.
 
-## Architecture
+## What makes it different
 
 ```
-+----------+     +-----------+     +----------+
-| Executor  |---->| Evaluator  |---->| Improver  |
-| (execute) |     | (evaluate) |     | (improve) |
-+----------+     +-----------+     +----------+
-     ^                                 |
-     +----------- improved tools -------+
+Level 1 (runtime):     Tool fails → auto-repair (path expansion, encoding fix, etc.)
+                       ↓ visible: "↳ Self-repair: expanded path"
+Level 2 (post-task):   Learner analyzes execution → extracts structured lessons
+                       → writes to graph memory → error patterns persisted
+                       ↓ visible: "💡 Learned: On Windows, use dir %USERPROFILE%\Desktop"
+Level 3 (structural):  Same structural issue ×3 → Improver auto-patches source code
+                       → pytest validates → behavior check → score must improve or rollback
+                       ↓ visible: "⚠ Auto-evolving: Structural issue seen 3 times"
 ```
 
-- **Executor** runs tools to accomplish a task.
-- **Evaluator** inspects the result, scores it (0-100), and reports issues.
-- **Improver** reads the evaluation, generates a code patch, runs tests,
-  and keeps the patch only if tests pass.
-- The loop repeats until the target score is reached or max rounds are exhausted.
+Self-evolution is **embedded in daily use**, not a separate command.
+Every task completion triggers Learner. Evidence accumulates across restarts.
+
+## Features
+
+- **Native function calling** — OpenAI-compatible tool_calls, no fragile JSON parsing
+- **Embedded graph memory** — NetworkX + sentence-transformers + PageRank, no external service
+- **Context compression** — old tool results truncated when context grows large
+- **Doom loop detection** — 3 identical tool calls → warn → fail
+- **Soft limit** — MAX_STEPS_PROMPT lets agent summarize instead of hard cutoff
+- **Multi-model fallback** — primary model fails → fallback model auto-retry
+- **Session history** — all conversations saved to `~/.panda/sessions/`
+- **Slash commands** — `/memory` (tidy graph memory), `/stats`, `/history`, `/help`
 
 ## Quick Start
 
 ```bash
-pip install -e ".[test]"
+pip install -e .
+panda                    # Interactive TUI chat
+panda chat -q "task"     # One-shot query
+panda config            # Show config
+panda tools             # List available tools
+```
+
+## Configuration
+
+`~/.panda/config.yaml`:
+
+```yaml
+model:
+  default: GLM52RJPT          # primary model
+  fallback: GLM-5.2           # fallback if primary fails
+  base_url: https://your-api/v1
+  api_key: your-key
+  max_tokens: 8192
+
+agent:
+  max_turns: 10
+  max_retries: 3
+
+memory:
+  enabled: true
+  auto_write: true            # auto-write valuable experiences to graph memory
+
+evolution:
+  target_score: 90
+  max_rounds: 3
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  CLI / TUI (cli.py, tui.py)                              │
+│  ┌─ /memory  ── /stats  ── /history  ── /help ── /clear │
+│  └─ session history → ~/.panda/sessions/                │
+├─────────────────────────────────────────────────────────┤
+│  ReAct Loop (react.py)                                   │
+│  ┌─ native FC (tool_calls from API)                     │
+│  │  └─ text fallback (TOOL_CALL: {json} parsing)        │
+│  ├─ Level 1: self-repair on tool error                  │
+│  ├─ doom loop detection (3 identical calls → fail)      │
+│  ├─ context compression (truncate old tool results)     │
+│  └─ soft limit (MAX_STEPS_PROMPT instead of hard cutoff) │
+├─────────────────────────────────────────────────────────┤
+│  3-Agent Evolution (orchestrator.py)                     │
+│  ┌─ Executor  → runs task via ReAct loop               │
+│  ├─ Evaluator → LLM scores execution 0-100             │
+│  ├─ Learner   → extracts lessons → graph memory        │
+│  │              tracks error patterns (persisted)       │
+│  └─ Improver  → patches source code (≥3 evidence)      │
+│                gate: pytest + behavior + score ↑ or     │
+│                rollback                                 │
+├─────────────────────────────────────────────────────────┤
+│  Embedded Graph Memory (memory.py)                      │
+│  ┌─ GraphEngine (NetworkX + embeddings + PageRank)     │
+│  ├─ retrieve_context() → injected into system prompt   │
+│  └─ /memory command → LLM refines/merges/deletes       │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents |
+| `write_file` | Write/create a file |
+| `search_files` | Search file contents with regex |
+| `list_files` | List directory contents |
+| `run_command` | Execute shell command |
+| `patch_file` | Find-and-replace with fuzzy matching |
+| `memory_retrieve` | Retrieve knowledge from graph memory |
+| `memory_write` | Write knowledge to graph memory |
+
+## Testing
+
+```bash
+# Unit tests (no API calls)
+pytest tests/ -m "not slow"
+
+# E2E tests (real LLM, needs API key)
+pytest tests/ -m slow
+
+# All tests
 pytest tests/
 ```
 
-## Usage
+## Project Structure
 
-```python
-from panda_agent import run_evolution
-from my_plugin import MyExecutor, MyEvaluator, MyImprover
-
-result = run_evolution(
-    executor=MyExecutor(),
-    evaluator=MyEvaluator(),
-    improver=MyImprover(),
-    task=Task(input_path="input.jpg", instruction="blur the background"),
-    target_score=95.0,
-    max_rounds=3,
-)
 ```
-
-## Writing a Plugin
-
-1. **Executor**: Subclass `Executor`, implement `execute(task) -> ExecutionResult`.
-2. **Evaluator**: Subclass `Evaluator`, implement `evaluate(task, result) -> Evaluation`.
-3. **Improver**: Subclass `Improver`, set `target_source_path`, `test_path`,
-   `project_root`, `llm_config`. Optionally override `keyword_map`.
+src/panda_agent/
+  brain.py          # System prompt + task complexity estimation
+  react.py          # ReAct loop: native FC, self-repair, doom loop, compression
+  llm.py            # Streaming LLM caller + multi-model fallback
+  tools.py          # 8 built-in tools with OpenAI-compatible schemas
+  memory.py         # Embedded graph memory (GraphEngine wrapper)
+  orchestrator.py   # 3-agent evolution: Executor, Evaluator, Learner, Improver
+  cli.py            # CLI entry point + slash commands
+  tui.py            # Rich-based terminal UI
+  config.py         # YAML config loader
+  types.py          # Dataclasses: ExecutionTrace, LLMResponse, etc.
+```
 
 ## Design Principles
 
-- **Plugins, not hardcoding** — Executor/Evaluator/Improver are injectable.
-- **Code is the evolution target** — Improver patches tool source files.
-- **Error-feedback retry** — Failed patches feed errors back to the LLM.
-- **Safety first** — Failed patches are always reverted.
-- **Model-agnostic** — Any LLM works; reasoning models need `reasoning_content` fallback.
+- **Evolution embedded in daily use** — no separate training mode
+- **Native function calling first** — text protocol as fallback only
+- **Safety first** — failed patches always reverted, pytest must pass
+- **Model-agnostic** — works with reasoning models (GLM52RJPT) and standard models
+- **No external services** — graph memory embedded in-process
 
 ## License
 
