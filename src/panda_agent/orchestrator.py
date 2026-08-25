@@ -16,6 +16,7 @@ from typing import Any, Callable
 from .config import Config, load_config
 from .llm import call_llm
 from .parsing import parse_evaluation
+from .patching import replace_definition
 from .react import run_react, ReActResult
 from .tools import TOOLS, execute_tool, get_tool_descriptions
 from .brain import build_system_prompt
@@ -207,15 +208,13 @@ def _extract_patch(response: str) -> str:
 
 
 def _replace_function(source: str, new_code: str) -> str:
-    """Replace a function definition in source."""
-    m = re.match(r"def (\w+)\(", new_code)
-    if not m:
-        return source
-    name = m.group(1)
-    pattern = re.compile(rf"^def {name}\(.*?(?=\ndef \w+\(|\Z)", re.DOTALL)
-    if not pattern.search(source):
-        return source
-    return pattern.sub(new_code.rstrip() + "\n\n", source, count=1)
+    """Replace a definition in source, returning source unchanged on failure.
+
+    Backwards-compatible wrapper over :func:`panda_agent.patching.replace_definition`.
+    Prefer that function directly: it reports *why* a patch did not apply,
+    which this signature cannot express.
+    """
+    return replace_definition(source, new_code).source
 
 
 def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tuple[bool, str]:
@@ -314,11 +313,14 @@ class Improver:
             if not patch_code:
                 continue
 
-            patched = _replace_function(source, patch_code)
-            if patched == source:
+            patch_result = replace_definition(source, patch_code)
+            if not patch_result.ok:
+                # Feed the specific reason back so the next attempt is informed
+                # rather than a blind retry. Nothing was written to disk.
+                last_test_output = f"Patch could not be applied: {patch_result.error}"
                 continue
 
-            source_path.write_text(patched, encoding="utf-8")
+            source_path.write_text(patch_result.source, encoding="utf-8")
 
             # Run tests
             passed, test_output = _run_pytest(self.test_path, self.project_root)
