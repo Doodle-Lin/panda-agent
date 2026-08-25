@@ -115,13 +115,17 @@ class TestTools:
         assert "read_file" in desc
         assert "write_file" in desc
 
-    def test_execute_read_file(self, tmp_path):
+    def test_execute_read_file(self, tmp_path, monkeypatch):
+        # tmp_path lives outside the default workspace, so scope the boundary
+        # to it rather than widening the boundary itself.
+        monkeypatch.setenv("PANDA_WORKSPACE", str(tmp_path))
         f = tmp_path / "test.txt"
         f.write_text("hello world")
         result = execute_tool("read_file", {"path": str(f)})
         assert "hello world" in result
 
-    def test_execute_write_file(self, tmp_path):
+    def test_execute_write_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PANDA_WORKSPACE", str(tmp_path))
         path = tmp_path / "out.txt"
         result = execute_tool("write_file", {"path": str(path), "content": "test"})
         assert "Wrote" in result
@@ -131,12 +135,14 @@ class TestTools:
         result = execute_tool("nonexistent", {})
         assert "unknown tool" in result
 
-    def test_execute_list_files(self, tmp_path):
+    def test_execute_list_files(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PANDA_WORKSPACE", str(tmp_path))
         (tmp_path / "a.txt").write_text("a")
         result = execute_tool("list_files", {"path": str(tmp_path)})
         assert "a.txt" in result
 
-    def test_execute_patch_file(self, tmp_path):
+    def test_execute_patch_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PANDA_WORKSPACE", str(tmp_path))
         f = tmp_path / "test.txt"
         f.write_text("hello old world")
         result = execute_tool("patch_file", {"path": str(f), "old_string": "old", "new_string": "new"})
