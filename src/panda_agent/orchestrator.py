@@ -496,17 +496,18 @@ class Improver:
         )
 
     def _behavioral_check(self, evaluation: Evaluation) -> float:
-        """Re-run the task with patched code and return the new score.
+        """Re-run a test interaction with patched code and return the new score.
 
-        This is a lightweight behavioral gate: re-execute the same task
-        and evaluate the result. If the score improved, the patch is good.
+        Behavioral gate: verify the patched brain.py/tools.py still produces
+        well-formed agent responses (DONE: or TOOL_CALL: prefix), not just
+        any non-empty LLM output.
         """
         import sys
         from panda_agent.brain import build_system_prompt
         from panda_agent.tools import get_tool_descriptions
 
         try:
-            test_prompt = "hello"
+            test_prompt = "你好"
             system_prompt = build_system_prompt(get_tool_descriptions(), self.config.agent.max_turns)
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -517,9 +518,29 @@ class Improver:
                 self.config.model,
                 model=None,
             )
-            if response and len(response.strip()) > 0:
-                return max(evaluation.score, 60.0)
-            return 0.0
+            if not response or not response.strip():
+                print(f"  [Improver] behavioral check: empty response", file=sys.stderr)
+                return 0.0
+
+            # Check response quality: must have DONE: or TOOL_CALL: prefix
+            # to be a valid agent response (not just raw LLM babble)
+            resp_stripped = response.strip()
+            has_done = "DONE:" in resp_stripped or "DONE：" in resp_stripped
+            has_tool = "TOOL_CALL:" in resp_stripped
+            has_failed = "FAILED:" in resp_stripped
+
+            if has_failed:
+                # Agent explicitly failed
+                print(f"  [Improver] behavioral check: FAILED: response", file=sys.stderr)
+                return max(evaluation.score * 0.5, 10.0)
+
+            if has_done or has_tool:
+                # Valid agent response format — patch preserved brain logic
+                return max(evaluation.score, 70.0)
+
+            # Response exists but no DONE:/TOOL_CALL: — brain prompt may be broken
+            print(f"  [Improver] behavioral check: no DONE:/TOOL_CALL: prefix (brain may be broken)", file=sys.stderr)
+            return max(evaluation.score * 0.3, 10.0)
         except Exception as e:
             print(f"  [Improver] behavioral check error: {e}", file=sys.stderr)
             return 0.0
