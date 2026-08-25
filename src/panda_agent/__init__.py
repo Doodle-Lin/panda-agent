@@ -1,9 +1,9 @@
-"""EvoAgent — Generic 3-Agent Self-Evolution Framework.
+"""PandaAgent ...Generic 3-Agent Self-Evolution Framework.
 
 Three agents form a closed loop:
-  Executor   → runs tools to accomplish a task
-  Evaluator  → scores the result and reports issues
-  Improver   → patches tool code based on evaluation, tests, keeps/reverts
+  Executor   →runs tools to accomplish a task
+  Evaluator  →scores the result and reports issues
+  Improver   →patches tool code based on evaluation, tests, keeps/reverts
 
 The Orchestrator drives the loop until target_score or max_rounds.
 """

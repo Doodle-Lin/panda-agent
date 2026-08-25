@@ -1,4 +1,4 @@
-"""Core data types for the EvoAgent framework.
+"""Core data types for the PandaAgent framework.
 
 All agents communicate through these structured types,
 keeping the framework decoupled from any specific domain.
@@ -11,7 +11,7 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Task — what the Executor works on
+# Task ...what the Executor works on
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -21,7 +21,7 @@ class Task:
     Attributes:
         input_path: Path to the input artifact (image, file, etc.).
         instruction: Natural-language instruction for the task.
-        metadata: Extra domain-specific context (e.g. fg_regions for P图).
+        metadata: Extra domain-specific context (e.g. fg_regions for P鍥?.
     """
 
     input_path: str
@@ -30,7 +30,7 @@ class Task:
 
 
 # ---------------------------------------------------------------------------
-# ExecutionResult — what the Executor produces
+# ExecutionResult ...what the Executor produces
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -51,7 +51,7 @@ class ExecutionResult:
 
 
 # ---------------------------------------------------------------------------
-# Evaluation — what the Evaluator produces
+# Evaluation ...what the Evaluator produces
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -74,7 +74,7 @@ class Evaluation:
 
 
 # ---------------------------------------------------------------------------
-# ImprovementResult — what the Improver produces
+# ImprovementResult ...what the Improver produces
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -101,7 +101,7 @@ class ImprovementResult:
 
 
 # ---------------------------------------------------------------------------
-# EvolutionResult — final output of the Orchestrator
+# EvolutionResult ...final output of the Orchestrator
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -132,7 +132,7 @@ class EvolutionResult:
 
 
 # ---------------------------------------------------------------------------
-# Event — for real-time monitoring
+# Event ...for real-time monitoring
 # ---------------------------------------------------------------------------
 
 @dataclass

@@ -1,6 +1,6 @@
-"""Orchestrator — drives the Executor → Evaluator → Improver loop.
+"""Orchestrator ...drives the Executor →Evaluator →Improver loop.
 
-This is the core of the EvoAgent framework. It runs rounds of
+This is the core of the PandaAgent framework. It runs rounds of
 execution, evaluation, and improvement until the target score is
 reached or max_rounds is exhausted.
 """
@@ -38,7 +38,7 @@ def run_evolution(
     Each round:
       1. Executor runs the task.
       2. Evaluator scores the result.
-      3. If score >= target_score → stop, success.
+      3. If score >= target_score →stop, success.
       4. If not the last round, Improver patches tool code.
       5. Repeat with improved tools.
 
@@ -71,7 +71,7 @@ def run_evolution(
         round_result = RoundResult(round_num=round_num)
 
         # Step 1: Execute
-        _emit("executor_start", "Executor: running task…", round_num)
+        _emit("executor_start", "Executor: running task...", round_num)
         exec_result = executor.execute(task)
         round_result.execution = exec_result
         _emit(
@@ -81,7 +81,7 @@ def run_evolution(
         )
 
         # Step 2: Evaluate
-        _emit("evaluator_start", "Evaluator: scoring result…", round_num)
+        _emit("evaluator_start", "Evaluator: scoring result...", round_num)
         evaluation = evaluator.evaluate(task, exec_result)
         round_result.evaluation = evaluation
         _emit(
@@ -105,9 +105,9 @@ def run_evolution(
             result.rounds.append(round_result)
             break
 
-        # Step 4: Improve (skip on last round — no point)
+        # Step 4: Improve (skip on last round ...no point)
         if round_num < max_rounds:
-            _emit("improver_start", "Improver: generating code patch…", round_num)
+            _emit("improver_start", "Improver: generating code patch...", round_num)
             try:
                 improvement = improver.improve(evaluation)
                 round_result.improvement = improvement

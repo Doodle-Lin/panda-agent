@@ -1,4 +1,4 @@
-# EvoAgent — Generic 3-Agent Self-Evolution Framework
+# PandaAgent — Generic 3-Agent Self-Evolution Framework
 
 ## WHAT
 
@@ -7,19 +7,19 @@ their own tool code through real-world execution, evaluation, and
 LLM-driven code patching.
 
 ```
-┌──────────┐    ┌───────────┐    ┌──────────┐
-│ Executor  │───→│ Evaluator  │───→│ Improver  │
-│ (执行)    │    │ (评估)     │    │ (改进)    │
-└──────────┘    └───────────┘    └──────────┘
-     ↑                                │
-     └──────── improved tools ────────┘
++----------+     +-----------+     +----------+
+| Executor  |---->| Evaluator  |---->| Improver  |
+| (execute) |     | (evaluate) |     | (improve) |
++----------+     +-----------+     +----------+
+     ^                                 |
+     +----------- improved tools -------+
 ```
 
 ## WHY
 
 LLM-based agents are fragile: their tool implementations are written once
 and never improved. When a tool produces suboptimal results, a human must
-manually debug and patch it. EvoAgent automates this loop:
+manually debug and patch it. PandaAgent automates this loop:
 
 1. **Executor** runs tools to accomplish a task.
 2. **Evaluator** inspects the result, scores it, and reports issues with
@@ -65,14 +65,14 @@ def run_evolution(
     max_rounds: int = 3,
 ) -> EvolutionResult
 ```
-- Drives the loop: execute → evaluate → improve → repeat.
+- Drives the loop: execute -> evaluate -> improve -> repeat.
 - Stops when target_score reached or max_rounds hit.
 - Emits events for UI/logging.
 
 ## Design Principles
 
 1. **Plugins, not hardcoding** — Executor/Evaluator/Improver are injectable.
-   The framework knows nothing about image editing.
+   The framework knows nothing about any specific domain.
 2. **Code is the evolution target** — Improver patches *tool source files*,
    not prompts or parameters. Tests are the safety net.
 3. **Error-feedback retry** — When a patch fails tests, the error message
@@ -86,39 +86,37 @@ def run_evolution(
 ## Framework Structure
 
 ```
-evo-agent/
+panda-agent/
 ├── pyproject.toml
 ├── README.md
 ├── specs/
-│   └── spec.md              ← this file
+│   └── spec.md              <- this file
 ├── src/
-│   └── evo_agent/
+│   └── panda_agent/
 │       ├── __init__.py
-│       ├── types.py         ← Task, ExecutionResult, Evaluation, etc.
-│       ├── executor.py      ← Executor protocol + base impl
-│       ├── evaluator.py     ← Evaluator protocol + base impl
-│       ├── improver.py      ← Improver protocol + base impl
-│       ├── orchestrator.py  ← run_evolution() loop
-│       └── llm.py           ← streaming LLM caller with reasoning fallback
+│       ├── types.py         <- Task, ExecutionResult, Evaluation, etc.
+│       ├── executor.py      <- Executor protocol + base impl
+│       ├── evaluator.py     <- Evaluator protocol + base impl
+│       ├── improver.py       <- Improver protocol + base impl
+│       ├── orchestrator.py   <- run_evolution() loop
+│       └── llm.py           <- streaming LLM caller with reasoning fallback
 ├── plugins/
-│   └── photo_edit/          ← first concrete plugin
+│   └── photo_edit/          <- first concrete plugin
 │       ├── __init__.py
 │       ├── executor.py
 │       ├── evaluator.py
 │       └── improver.py
 └── tests/
-    ├── test_types.py
-    ├── test_orchestrator.py
-    ├── test_improver.py
+    ├── test_framework.py
     └── plugins/
         └── test_photo_edit.py
 ```
 
 ## Convergence Criteria
 
-- `target_score` reached → stop, success.
-- `max_rounds` exhausted → stop, report best score.
-- All improvement attempts in a round fail → stop, no progress.
+- `target_score` reached -> stop, success.
+- `max_rounds` exhausted -> stop, report best score.
+- All improvement attempts in a round fail -> stop, no progress.
 
 ## Event System
 

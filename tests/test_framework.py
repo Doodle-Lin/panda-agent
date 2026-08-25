@@ -1,4 +1,4 @@
-"""Tests for the EvoAgent framework core — types, orchestrator, improver.
+"""Tests for the PandaAgent framework core —types, orchestrator, improver.
 
 Uses mock agents to verify the loop logic without real API calls.
 """
@@ -7,7 +7,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from evo_agent.types import (
+from panda_agent.types import (
     Task,
     ExecutionResult,
     Evaluation,
@@ -16,11 +16,11 @@ from evo_agent.types import (
     EvolutionResult,
     Event,
 )
-from evo_agent.executor import Executor
-from evo_agent.evaluator import Evaluator
-from evo_agent.improver import Improver, _extract_patch, _replace_function
-from evo_agent.orchestrator import run_evolution
-from evo_agent.llm import LLMConfig, call_llm
+from panda_agent.executor import Executor
+from panda_agent.evaluator import Evaluator
+from panda_agent.improver import Improver, _extract_patch, _replace_function
+from panda_agent.orchestrator import run_evolution
+from panda_agent.llm import LLMConfig, call_llm
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ class TestTypes:
 
 class TestOrchestrator:
     def test_target_reached_first_round(self):
-        """Score >= target on round 1 → stop immediately."""
+        """Score >= target on round 1 →stop immediately."""
         executor = MockExecutor()
         evaluator = MockEvaluator([95.0])
         improver = MockImprover([])
@@ -155,7 +155,7 @@ class TestOrchestrator:
         assert result.total_patches == 0
 
     def test_max_rounds_exhausted(self):
-        """Score never reaches target → run all rounds."""
+        """Score never reaches target →run all rounds."""
         executor = MockExecutor()
         evaluator = MockEvaluator([80.0, 80.0, 80.0])
         improver = MockImprover([
@@ -175,7 +175,7 @@ class TestOrchestrator:
         assert result.final_score == 80.0
 
     def test_improvement_applied(self):
-        """Improver patches code → patches counted."""
+        """Improver patches code →patches counted."""
         executor = MockExecutor()
         evaluator = MockEvaluator([80.0, 95.0])
         improver = MockImprover([
@@ -194,7 +194,7 @@ class TestOrchestrator:
         assert len(result.rounds) == 2
 
     def test_improver_skipped_last_round(self):
-        """Last round → no improvement attempt."""
+        """Last round →no improvement attempt."""
         executor = MockExecutor()
         evaluator = MockEvaluator([80.0, 80.0, 80.0])
         improver = MockImprover([
@@ -235,7 +235,7 @@ class TestOrchestrator:
         assert "target_reached" in types
 
     def test_improver_exception_handled(self):
-        """Improver raising exception → loop continues."""
+        """Improver raising exception →loop continues."""
         class CrashingImprover(MockImprover):
             def improve(self, evaluation):
                 raise RuntimeError("crash")
@@ -329,7 +329,7 @@ class TestLLM:
         assert config.max_tokens == 8192
         assert config.temperature == 0.2
 
-    @patch("evo_agent.llm.requests.post")
+    @patch("panda_agent.llm.requests.post")
     def test_call_llm_content(self, mock_post):
         """Non-reasoning model: content has output."""
         mock_resp = MagicMock()
@@ -345,7 +345,7 @@ class TestLLM:
         result = call_llm("test prompt", config)
         assert result == "hello world"
 
-    @patch("evo_agent.llm.requests.post")
+    @patch("panda_agent.llm.requests.post")
     def test_call_llm_reasoning_fallback(self, mock_post):
         """Reasoning model: content empty, reasoning_content has output."""
         mock_resp = MagicMock()
@@ -362,9 +362,9 @@ class TestLLM:
         assert "thinking" in result
         assert "answer" in result
 
-    @patch("evo_agent.llm.requests.post")
+    @patch("panda_agent.llm.requests.post")
     def test_call_llm_timeout(self, mock_post):
-        """Timeout → returns NO_CHANGE error."""
+        """Timeout →returns NO_CHANGE error."""
         import requests as req
         mock_post.side_effect = req.Timeout("timeout")
 
