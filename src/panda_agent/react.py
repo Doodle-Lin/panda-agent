@@ -20,7 +20,7 @@ from typing import Callable
 from .brain import build_system_prompt, max_turns_for_task, should_retry
 from .config import Config
 from .llm import call_llm_detailed, LLMResponse
-from .tools import TOOLS, execute_tool, get_tool_descriptions
+from .tools import TOOLS, execute_tool, get_tool_descriptions, get_tool_schemas
 from .memory import MemoryClient
 from .types import ExecutionTrace, TurnRecord
 
@@ -327,6 +327,9 @@ def run_react(
         if ctx:
             system += "\n\n" + ctx
 
+    # Get native function calling schemas
+    tool_schemas = get_tool_schemas()
+
     messages = [{"role": "system", "content": system}]
     messages.append({"role": "user", "content": task})
 
@@ -346,8 +349,8 @@ def run_react(
         # Context compression: truncate old tool results when messages get too long
         messages = _compress_messages(messages, threshold=20000, preserve_recent=6)
 
-        # Call LLM with detailed response (reasoning + content separated)
-        llm_resp = call_llm_detailed(messages, config.model)
+        # Call LLM with native function calling (tools param)
+        llm_resp = call_llm_detailed(messages, config.model, tools=tool_schemas)
 
         if llm_resp.is_error:
             _emit("llm_error", llm_resp.error[:200])
@@ -377,7 +380,94 @@ def run_react(
 
         turn_record = TurnRecord(turn=turn, reasoning=llm_resp.reasoning[:200])
 
-        # TOOL_CALL takes priority over DONE
+        # === Priority 1: Native function calling (tool_calls from API) ===
+        if llm_resp.tool_calls:
+            for tc in llm_resp.tool_calls:
+                tool_name = tc["name"]
+                tool_args = tc["args"]
+                tool_id = tc.get("id", "")
+
+                _emit("tool_call", f"{tool_name}({tool_args})")
+                turn_record.action = "TOOL_CALL"
+                turn_record.action_args = {"name": tool_name, "args": tool_args}
+
+                # Execute tool
+                tool_result = execute_tool(tool_name, tool_args)
+
+                # === Level 1: Self-Repair on tool error ===
+                if tool_result.startswith("Error") or tool_result.startswith("ERROR"):
+                    trace.add_error(tool_result)
+                    new_name, new_args, strategy = _self_repair(tool_result, tool_name, tool_args, config)
+
+                    if (new_name, new_args) != (tool_name, tool_args):
+                        _emit("self_repair", f"  ↳ Self-repair: {strategy}")
+                        turn_record.self_repaired = True
+                        turn_record.repair_strategy = strategy
+                        tool_result = execute_tool(new_name, new_args)
+                        _emit("tool_call", f"  ↳ {new_name}({new_args})")
+
+                        if not (tool_result.startswith("Error") or tool_result.startswith("ERROR")):
+                            _emit("tool_result", f"  ↳ {tool_result[:200]}")
+                            tool_calls.append({"name": new_name, "args": new_args, "result": tool_result})
+                            trace.add_repair(f"Turn {turn}: {strategy} → recovered")
+                        else:
+                            _emit("tool_result", f"  ↳ Still failing: {tool_result[:200]}")
+                            tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+                    else:
+                        _emit("tool_result", tool_result[:200])
+                        tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+                else:
+                    _emit("tool_result", tool_result[:200])
+                    tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+
+                turn_record.tool_result = tool_result[:200]
+
+                # Add assistant message with tool_calls + tool result for API context
+                messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [{
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(tool_args, ensure_ascii=False),
+                        },
+                    }],
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_id,
+                    "content": tool_result,
+                })
+
+                # === Doom loop detection ===
+                simple_calls = [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls]
+                if _check_doom_loop(simple_calls):
+                    _emit("doom_loop", "  ⚠ Detected repeated tool calls — injecting warning")
+                    trace.add_error(f"Turn {turn}: doom loop — same call 3x")
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "WARNING: You have called the same tool with the same arguments 3 times in a row. "
+                            "This is not making progress. Try a completely different approach or tool. "
+                            "If you are stuck, output DONE: or FAILED: with an explanation."
+                        ),
+                    })
+                    if len(simple_calls) >= 4 and _check_doom_loop(simple_calls[-3:]):
+                        _emit("failed", "Doom loop — agent stuck repeating same tool call")
+                        result.error = "Doom loop: repeated same tool call 3x after warning"
+                        result.tool_calls = tool_calls
+                        result.turns = turn
+                        trace.final_success = False
+                        result.trace = trace
+                        return result
+                    break  # break inner for-loop, continue outer for-loop
+
+            trace.turns.append(turn_record)
+            continue
+
+        # === Priority 2: Text protocol fallback (TOOL_CALL: {json}) ===
         tool_call = _parse_tool_call(response)
         if tool_call:
             tool_name = tool_call.get("name", "")

@@ -185,12 +185,52 @@ register("memory_write", "Write knowledge to graph memory", {"content": "str", "
 
 
 def get_tool_descriptions() -> str:
-    """Return formatted tool descriptions for the system prompt."""
+    """Return formatted tool descriptions for the system prompt (text protocol)."""
     lines = []
     for name, tool in TOOLS.items():
         params = ", ".join(f"{k}: {v}" for k, v in tool["params"].items())
         lines.append(f"- {name}({params}): {tool['description']}")
     return "\n".join(lines)
+
+
+# Python type → JSON Schema type mapping
+_TYPE_MAP = {"str": "string", "int": "integer", "bool": "boolean", "float": "number"}
+
+
+def get_tool_schemas() -> list[dict]:
+    """Return OpenAI-compatible tool schemas for native function calling.
+
+    Format:
+        [{"type": "function", "function": {
+            "name": "...", "description": "...",
+            "parameters": {"type": "object", "properties": {...}, "required": [...]}
+        }}]
+    """
+    schemas = []
+    for name, tool in TOOLS.items():
+        properties = {}
+        required = []
+        for param_name, param_type in tool["params"].items():
+            json_type = _TYPE_MAP.get(param_type, "string")
+            properties[param_name] = {"type": json_type}
+            # Heuristic: first param is required, rest optional
+            # (matches existing tool definitions where first arg is the primary input)
+            if param_name in ("path", "command", "content", "query", "pattern"):
+                required.append(param_name)
+
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": tool["description"],
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        })
+    return schemas
 
 
 def execute_tool(name: str, args: dict) -> str:
