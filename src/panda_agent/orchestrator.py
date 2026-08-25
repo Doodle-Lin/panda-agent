@@ -149,9 +149,18 @@ an evaluation report.
 
 ## Target File: {target_file}
 
+## CRITICAL CONSTRAINTS — read carefully
+1. Do NOT change function signatures (parameter names, order, defaults). \
+   Existing tests call these functions with exact argument names.
+2. Do NOT change return types or formats. Tests assert specific return values.
+3. Do NOT remove or rename any existing function.
+4. Keep all existing behavior intact — only ADD or FIX, do not BREAK.
+5. If you add a new function, also register it if needed (for tools.py).
+
 ## Instructions
 Output ONLY the function(s) you want to replace. Each function must be a \
 complete, valid Python function starting with `def function_name(`.
+The function signature MUST match the original exactly.
 Do NOT include module-level docstrings, imports, or constants unless \
 you are also replacing them.
 
@@ -335,7 +344,8 @@ def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tupl
         )
         output = (result.stdout or "") + (result.stderr or "")
         passed = result.returncode == 0 and "passed" in output
-        return passed, output[-500:]
+        # Keep last 1500 chars to give LLM enough context for retry
+        return passed, output[-1500:]
     except subprocess.TimeoutExpired:
         return False, f"pytest timed out after {timeout}s"
     except Exception as e:
@@ -517,6 +527,12 @@ class Improver:
         Behavioral gate: verify the patched brain.py/tools.py still produces
         well-formed agent responses (DONE: or TOOL_CALL: prefix), not just
         any non-empty LLM output.
+
+        Returns a score that reflects whether the patch is safe:
+        - 100.0: patch works correctly (valid DONE:/TOOL_CALL: response)
+        - 50.0: patch produces FAILED: but no crash
+        - 10.0: patch broke brain prompt (no DONE:/TOOL_CALL:)
+        - 0.0: exception during check
         """
         import sys
         from panda_agent.brain import build_system_prompt
@@ -536,27 +552,23 @@ class Improver:
             )
             if not response or not response.strip():
                 print(f"  [Improver] behavioral check: empty response", file=sys.stderr)
-                return 0.0
+                return 10.0
 
-            # Check response quality: must have DONE: or TOOL_CALL: prefix
-            # to be a valid agent response (not just raw LLM babble)
             resp_stripped = response.strip()
             has_done = "DONE:" in resp_stripped or "DONE：" in resp_stripped
             has_tool = "TOOL_CALL:" in resp_stripped
             has_failed = "FAILED:" in resp_stripped
 
             if has_failed:
-                # Agent explicitly failed
                 print(f"  [Improver] behavioral check: FAILED: response", file=sys.stderr)
-                return max(evaluation.score * 0.5, 10.0)
+                return 50.0
 
             if has_done or has_tool:
-                # Valid agent response format — patch preserved brain logic
-                return max(evaluation.score, 70.0)
+                print(f"  [Improver] behavioral check: valid agent response ✓", file=sys.stderr)
+                return 100.0
 
-            # Response exists but no DONE:/TOOL_CALL: — brain prompt may be broken
-            print(f"  [Improver] behavioral check: no DONE:/TOOL_CALL: prefix (brain may be broken)", file=sys.stderr)
-            return max(evaluation.score * 0.3, 10.0)
+            print(f"  [Improver] behavioral check: no DONE:/TOOL_CALL: (brain may be broken)", file=sys.stderr)
+            return 10.0
         except Exception as e:
             print(f"  [Improver] behavioral check error: {e}", file=sys.stderr)
             return 0.0
