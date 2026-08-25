@@ -1,4 +1,4 @@
-"""Photo-edit Executor — wraps the ReActAgent from photo-edit-agent.
+"""Photo-edit Executor —wraps the ReActAgent from photo-edit-agent.
 
 Loads the existing agent.py run_edit() function and calls it.
 """
@@ -8,8 +8,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from evo_agent.types import Task, ExecutionResult
-from evo_agent.executor import Executor
+from panda_agent.types import Task, ExecutionResult
+from panda_agent.executor import Executor
 
 
 # Path to the existing photo-edit-agent project

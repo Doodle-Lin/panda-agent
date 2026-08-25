@@ -1,4 +1,4 @@
-"""Photo-edit Improver — uses LLM to patch tools.py based on VLM evaluation.
+"""Photo-edit Improver —uses LLM to patch tools.py based on VLM evaluation.
 
 Subclasses the base Improver with photo-edit-specific configuration.
 """
@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evo_agent.improver import Improver
-from evo_agent.llm import LLMConfig
+from panda_agent.improver import Improver
+from panda_agent.llm import LLMConfig
 
 
 _PHOTO_EDIT_ROOT = Path(r"E:\workspace\photo-edit-agent")

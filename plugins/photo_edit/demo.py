@@ -1,4 +1,4 @@
-"""End-to-end demo: run the EvoAgent framework on the photo-edit task.
+"""End-to-end demo: run the PandaAgent framework on the photo-edit task.
 
 Usage:
     python plugins/photo_edit/demo.py
@@ -13,7 +13,7 @@ from pathlib import Path
 # Add framework to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-from evo_agent import run_evolution, Task
+from panda_agent import run_evolution, Task
 from plugins.photo_edit import (
     PhotoEditExecutor,
     PhotoEditEvaluator,
@@ -32,7 +32,7 @@ def main():
         events.append(line)
 
     print("=" * 60, flush=True)
-    print("EvoAgent — Photo Edit Self-Evolution Demo", flush=True)
+    print("PandaAgent —Photo Edit Self-Evolution Demo", flush=True)
     print("=" * 60, flush=True)
 
     result = run_evolution(

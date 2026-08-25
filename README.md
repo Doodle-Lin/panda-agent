@@ -1,4 +1,4 @@
-# EvoAgent — Generic 3-Agent Self-Evolution Framework
+# PandaAgent — Generic 3-Agent Self-Evolution Framework
 
 A framework where three agents form a closed loop to iteratively improve
 their own tool code through real-world execution, evaluation, and
@@ -7,12 +7,12 @@ LLM-driven code patching.
 ## Architecture
 
 ```
-┌──────────┐    ┌───────────┐    ┌──────────┐
-│ Executor  │───→│ Evaluator  │───→│ Improver  │
-│ (执行)    │    │ (评估)     │    │ (改进)    │
-└──────────┘    └───────────┘    └──────────┘
-     ↑                                │
-     └──────── improved tools ────────┘
++----------+     +-----------+     +----------+
+| Executor  |---->| Evaluator  |---->| Improver  |
+| (execute) |     | (evaluate) |     | (improve) |
++----------+     +-----------+     +----------+
+     ^                                 |
+     +----------- improved tools -------+
 ```
 
 - **Executor** runs tools to accomplish a task.
@@ -31,7 +31,7 @@ pytest tests/
 ## Usage
 
 ```python
-from evo_agent import run_evolution
+from panda_agent import run_evolution
 from my_plugin import MyExecutor, MyEvaluator, MyImprover
 
 result = run_evolution(
@@ -46,8 +46,8 @@ result = run_evolution(
 
 ## Writing a Plugin
 
-1. **Executor**: Subclass `Executor`, implement `execute(task) → ExecutionResult`.
-2. **Evaluator**: Subclass `Evaluator`, implement `evaluate(task, result) → Evaluation`.
+1. **Executor**: Subclass `Executor`, implement `execute(task) -> ExecutionResult`.
+2. **Evaluator**: Subclass `Evaluator`, implement `evaluate(task, result) -> Evaluation`.
 3. **Improver**: Subclass `Improver`, set `target_source_path`, `test_path`,
    `project_root`, `llm_config`. Optionally override `keyword_map`.
 

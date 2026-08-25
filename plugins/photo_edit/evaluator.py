@@ -1,4 +1,4 @@
-"""Photo-edit Evaluator — uses VLM to compare original vs edited image.
+"""Photo-edit Evaluator —uses VLM to compare original vs edited image.
 
 Wraps the existing qa_agent.py evaluate_edit() function.
 """
@@ -8,8 +8,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from evo_agent.types import Task, ExecutionResult, Evaluation
-from evo_agent.evaluator import Evaluator
+from panda_agent.types import Task, ExecutionResult, Evaluation
+from panda_agent.evaluator import Evaluator
 
 _PHOTO_EDIT_ROOT = Path(r"E:\workspace\photo-edit-agent")
 

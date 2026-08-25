@@ -1,7 +1,7 @@
-"""Photo-Edit plugin for EvoAgent — wraps the existing photo-edit-agent project.
+"""Photo-Edit plugin for PandaAgent —wraps the existing photo-edit-agent project.
 
 This plugin demonstrates how to create concrete Executor/Evaluator/Improver
-implementations for the EvoAgent framework.
+implementations for the PandaAgent framework.
 
 It wraps the existing photo-edit-agent codebase:
   - Executor: calls the ReActAgent to edit images
