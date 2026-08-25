@@ -140,7 +140,7 @@ Output format:
 ```
 PATCH_START
 ```python
-{code_here}
+{{code_here}}
 ```
 PATCH_END
 EXPLANATION: what you changed and why
@@ -246,6 +246,12 @@ class Improver:
         self.config = config
         self.project_root = Path(__file__).parent.parent.parent
         self.test_path = self.project_root / "tests"
+        # Optional regression gate. When set, a patch must also leave benchmark
+        # performance intact -- not merely keep the unit tests green.
+        self.benchmark_gate: Callable[[], Any] | None = None
+        self.baseline: Any | None = None
+        self.tolerance: float = 2.0
+        self.last_reject_reason: str | None = None
 
     def improve(self, evaluation: Evaluation) -> ImprovementResult:
         """Generate and apply patches based on evaluation."""
@@ -325,20 +331,40 @@ class Improver:
             # Run tests
             passed, test_output = _run_pytest(self.test_path, self.project_root)
 
-            if passed:
-                backup_path.unlink(missing_ok=True)
-                return ImprovementResult(
-                    patched=True,
-                    tests_passed=True,
-                    diff=f"Patched {source_path.name}",
-                    explanation=_extract_explanation(response),
-                    test_output=test_output,
-                    attempts=attempt,
-                )
-            else:
+            if not passed:
                 shutil.copy2(backup_path, source_path)
                 source = source_path.read_text(encoding="utf-8")
                 last_test_output = test_output
+                continue
+
+            # Second gate: unit tests passing only means the code is not
+            # broken. Confirm the agent's measured behaviour did not degrade
+            # before keeping the patch.
+            gate_note = ""
+            if self.benchmark_gate is not None and self.baseline is not None:
+                from .benchmark import check_no_regression
+
+                after = self.benchmark_gate()
+                gate = check_no_regression(self.baseline, after, self.tolerance)
+                if not gate.accepted:
+                    self.last_reject_reason = gate.reason
+                    shutil.copy2(backup_path, source_path)
+                    source = source_path.read_text(encoding="utf-8")
+                    last_test_output = (
+                        f"Unit tests passed but benchmark regressed: {gate.reason}"
+                    )
+                    continue
+                gate_note = f" | benchmark {gate.delta:+.1f}"
+
+            backup_path.unlink(missing_ok=True)
+            return ImprovementResult(
+                patched=True,
+                tests_passed=True,
+                diff=f"Patched {source_path.name}{gate_note}",
+                explanation=_extract_explanation(response),
+                test_output=test_output,
+                attempts=attempt,
+            )
 
         # All failed — restore
         if backup_path.exists():
