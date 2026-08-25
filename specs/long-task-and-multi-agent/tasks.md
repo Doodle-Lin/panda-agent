@@ -1,37 +1,38 @@
-# Task Traceability — spec → test mapping
+# Task Traceability — spec → test mapping (revised)
 
 | Spec criterion | Test file | Status |
 |----------------|----------|--------|
-| P1.1 write_file 后文件实际存在 | tests/test_write_file.py::test_write_file_creates_file | 🔴 |
-| P1.2 写入失败返回明确错误 | tests/test_write_file.py::test_write_file_error_on_failure | 🔴 |
-| P1.3 agent 识别写入失败并重试 | tests/test_react.py::test_write_file_retry_on_failure | 🔴 |
-| P2.1 写小说 30 轮内完成 | tests/test_long_task.py::test_write_story_completes | 🔴 (slow) |
-| P2.2 文件实际创建在桌面 | tests/test_long_task.py::test_story_file_exists | 🔴 (slow) |
-| P2.3 文件内容 ≥ 1500 字 | tests/test_long_task.py::test_story_content_length | 🔴 (slow) |
-| P2.4 故事内容完整 | tests/test_long_task.py::test_story_has_title_and_ending | 🔴 (slow) |
-| P3.1 复杂任务自动分解 | tests/test_orchestrate.py::test_complex_task_decomposes | 🔴 |
-| P3.2 子任务独立 ReAct 循环 | tests/test_orchestrate.py::test_subtask_isolated_context | 🔴 |
-| P3.3 子任务结果传回主 agent | tests/test_orchestrate.py::test_subtask_result_aggregation | 🔴 |
-| P3.4 简单任务不走分解 | tests/test_orchestrate.py::test_simple_task_no_decompose | 🔴 |
-| P3.5 子任务数量 ≤ 5 | tests/test_orchestrate.py::test_max_subtasks | 🔴 |
-| P4.1 子任务 messages 独立 | tests/test_orchestrate.py::test_context_isolation | 🔴 |
-| P4.2 主 agent 只接收最终结果 | tests/test_orchestrate.py::test_main_agent_gets_answer_only | 🔴 |
-| P4.3 子任务失败主 agent 重试 | tests/test_orchestrate.py::test_subtask_failure_retry | 🔴 |
+| P1.1 超阈值自动压缩 | tests/test_context_compress.py::test_compress_on_threshold | 🔴 |
+| P1.2 保留 system + 最近 N 轮 | tests/test_context_compress.py::test_preserve_recent | 🔴 |
+| P1.3 旧工具输出替换为摘要 | tests/test_context_compress.py::test_truncate_old_tool_results | 🔴 |
+| P1.4 压缩后 token 减少 ≥50% | tests/test_context_compress.py::test_token_reduction | 🔴 |
+| P1.5 压缩后 agent 继续正常执行 | tests/test_context_compress.py::test_compress_then_continue | 🔴 |
+| P2.1 连续3次相同 tool call 检测 | tests/test_doom_loop.py::test_detect_doom_loop | 🔴 |
+| P2.2 注入警告 prompt | tests/test_doom_loop.py::test_inject_warning | 🔴 |
+| P2.3 仍重复 → FAILED | tests/test_doom_loop.py::test_fail_after_warning | 🔴 |
+| P2.4 不同参数重试不算死循环 | tests/test_doom_loop.py::test_different_args_not_doom | 🔴 |
+| P3.1 max_turns 到极限注入 MAX_STEPS_PROMPT | tests/test_soft_limit.py::test_inject_max_steps_prompt | 🔴 |
+| P3.2 注入后 text-only 回复 | tests/test_soft_limit.py::test_text_only_after_prompt | 🔴 |
+| P3.3 替代 salvage（salvage 保留为 fallback） | tests/test_soft_limit.py::test_salvage_still_works | 🔴 |
 
 ## Phases
 
-### Phase 1: Debug write_file (P1) — find root cause first
-- [x] Run write_file directly, verify file exists on disk → **write_file itself works**
-- [x] Write failing test for write_file → **RED: prompt has no rule requiring write_file for file creation**
-- [x] Fix: add rule 7 to system prompt → **GREEN: 117/117 passing**
-- [x] Checkpoint: write_file works, existing tests still pass
+### Phase 1: Debug write_file (P1) — ✅ COMPLETED
+- [x] write_file itself works — root cause was prompt missing rule 7
+- [x] Added rule 7: must use write_file to create files
+- [x] 117/117 passing
 
-### Phase 2: Multi-agent orchestration (P3+P4)
-- [ ] Write failing test for task decomposition (complex vs simple)
-- [ ] Write failing test for context isolation
-- [ ] Implement orchestrator: decompose → sub-React → aggregate
-- [ ] Checkpoint: mock LLM tests pass, 116+ tests green
+### Phase 2: Doom Loop Detection (P2) — simplest, highest impact
+- [ ] Write failing test: 3 identical tool calls → detected
+- [ ] Implement doom loop detection in react.py
+- [ ] Checkpoint: 117+ tests green
 
-### Phase 3: E2E verification (P2) — real LLM
-- [ ] Run panda "写小说" with real LLM, verify file on desktop
-- [ ] Checkpoint: novel file exists, ≥1500 chars, has title and ending
+### Phase 3: Soft Limit (P3) — replace hard cutoff
+- [ ] Write failing test: max_turns → inject MAX_STEPS_PROMPT
+- [ ] Implement soft limit in react.py
+- [ ] Checkpoint: 117+ tests green
+
+### Phase 4: Context Compression (P1) — most complex
+- [ ] Write failing test: threshold → compress → continue
+- [ ] Implement context compression in react.py
+- [ ] Checkpoint: 117+ tests green

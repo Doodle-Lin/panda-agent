@@ -38,6 +38,26 @@ class ReActResult:
 
 
 # ---------------------------------------------------------------------------
+# Doom loop detection — same tool call 3x in a row = stuck
+# ---------------------------------------------------------------------------
+
+def _check_doom_loop(tool_calls: list[dict]) -> bool:
+    """Return True if the last 3 tool calls are identical (same name + same args).
+
+    Inspired by opencode's processor.ts DOOM_LOOP_THRESHOLD = 3.
+    Different args = agent trying different approaches = NOT doom loop.
+    """
+    if len(tool_calls) < 3:
+        return False
+    last3 = tool_calls[-3:]
+    first = last3[0]
+    return all(
+        tc["name"] == first["name"] and tc["args"] == first["args"]
+        for tc in last3
+    )
+
+
+# ---------------------------------------------------------------------------
 # Response parsing
 # ---------------------------------------------------------------------------
 
@@ -273,6 +293,32 @@ def run_react(
 
             turn_record.tool_result = tool_result[:200]
             trace.turns.append(turn_record)
+
+            # === Doom loop detection ===
+            simple_calls = [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls]
+            if _check_doom_loop(simple_calls):
+                _emit("doom_loop", "  ⚠ Detected repeated tool calls — injecting warning")
+                trace.add_error(f"Turn {turn}: doom loop — same call 3x")
+                # Inject warning prompt, give LLM one more chance
+                messages.append({"role": "assistant", "content": response})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "WARNING: You have called the same tool with the same arguments 3 times in a row. "
+                        "This is not making progress. Try a completely different approach or tool. "
+                        "If you are stuck, output DONE: or FAILED: with an explanation."
+                    ),
+                })
+                # Check again after this turn — if still repeating, fail
+                if len(simple_calls) >= 4 and _check_doom_loop(simple_calls[-3:]):
+                    _emit("failed", "Doom loop — agent stuck repeating same tool call")
+                    result.error = "Doom loop: repeated same tool call 3x after warning"
+                    result.tool_calls = tool_calls
+                    result.turns = turn
+                    trace.final_success = False
+                    result.trace = trace
+                    return result
+                continue
 
             messages.append({"role": "assistant", "content": response})
             messages.append({"role": "user", "content": f"Tool result:\n{tool_result}"})
