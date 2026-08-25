@@ -9,6 +9,7 @@ Three-layer evolution:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -168,16 +169,40 @@ class Learner:
     """Learner: Level 2 post-task learning.
 
     Analyzes the ExecutionTrace after each task and:
-    1. Extracts lessons → writes to memory for future tasks
-    2. Identifies recurring error patterns → tracks occurrence count
-    3. If a pattern appears ≥3 times AND is structural → triggers Level 3
+    1. Extracts lessons -> writes to memory for future tasks
+    2. Identifies recurring error patterns -> tracks occurrence count (persisted)
+    3. If a pattern appears >=3 times AND is structural -> triggers Level 3
     """
 
     def __init__(self, config: Config):
         self.config = config
         self.memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
-        # Error pattern registry (in-memory; persisted via memory service)
+        # Error pattern registry — persisted to $PANDA_HOME/error_counts.json
         self._error_counts: dict[str, int] = {}
+        panda_home = os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))
+        self._counts_path = Path(panda_home) / "error_counts.json"
+        self._load_error_counts()
+
+    def _load_error_counts(self):
+        """Load persisted error counts from disk."""
+        try:
+            if self._counts_path.exists():
+                data = json.loads(self._counts_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self._error_counts = {k: int(v) for k, v in data.items()}
+        except Exception:
+            pass
+
+    def _save_error_counts(self):
+        """Persist error counts to disk."""
+        try:
+            self._counts_path.parent.mkdir(parents=True, exist_ok=True)
+            self._counts_path.write_text(
+                json.dumps(self._error_counts, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     def learn(self, task: Task, result: ExecutionResult, evaluation: Evaluation) -> LearningResult:
         """Analyze execution trace and extract lessons.
@@ -246,6 +271,7 @@ class Learner:
             normalized = pattern.strip().lower()[:100]
             if normalized:
                 self._error_counts[normalized] = self._error_counts.get(normalized, 0) + 1
+        self._save_error_counts()
 
         # Check if Level 3 should trigger
         trigger = False
@@ -258,6 +284,7 @@ class Learner:
             # Check if we've seen this kind of issue before
             pattern_key = structural_reason.strip().lower()[:100]
             self._error_counts[pattern_key] = self._error_counts.get(pattern_key, 0) + 1
+            self._save_error_counts()
 
             if self._error_counts[pattern_key] >= 3:
                 trigger = True

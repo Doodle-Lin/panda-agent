@@ -4,6 +4,7 @@ Uses mocks for LLM calls — no real API needed.
 """
 
 import json
+import os
 import pytest
 from unittest.mock import MagicMock, patch, call
 from pathlib import Path
@@ -148,24 +149,36 @@ class TestLearner:
     @patch("panda_agent.orchestrator.call_llm")
     def test_learner_no_trigger_below_3(self, mock_llm):
         """Test 7: After 2 calls with same pattern, trigger_evolution=False."""
-        mock_llm.return_value = json.dumps({
-            "lessons": [],
-            "recurring_errors": ["same_error"],
-            "is_structural": True,
-            "structural_reason": "brain.py prompt issue",
-        })
-        config = Config()
-        config.memory.enabled = False
-        learner = Learner(config)
-        task = Task(instruction="test task")
-        result = ExecutionResult(success=False, error="fail")
-        evaluation = Evaluation(score=50)
+        import tempfile
+        tmpdir = tempfile.mkdtemp()
+        old_home = os.environ.get("PANDA_HOME")
+        os.environ["PANDA_HOME"] = tmpdir
+        try:
+            mock_llm.return_value = json.dumps({
+                "lessons": [],
+                "recurring_errors": ["same_error"],
+                "is_structural": True,
+                "structural_reason": "brain.py prompt issue",
+            })
+            config = Config()
+            config.memory.enabled = False
+            learner = Learner(config)
+            task = Task(instruction="test task")
+            result = ExecutionResult(success=False, error="fail")
+            evaluation = Evaluation(score=50)
 
-        learning = None
-        for _ in range(2):
-            learning = learner.learn(task, result, evaluation)
+            learning = None
+            for _ in range(2):
+                learning = learner.learn(task, result, evaluation)
 
-        assert learning.trigger_evolution is False
+            assert learning.trigger_evolution is False
+        finally:
+            if old_home:
+                os.environ["PANDA_HOME"] = old_home
+            else:
+                del os.environ["PANDA_HOME"]
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     @patch("panda_agent.orchestrator.call_llm")
     def test_learner_structural_triggers(self, mock_llm):
