@@ -67,7 +67,11 @@ class TUI:
         elif event_type == "self_repair":
             self.console.print(f"  [bold magenta]{message}[/]")
         elif event_type == "tool_result":
-            self.console.print(f"  [blue]{message}[/]")
+            # Fold long tool results — show first 150 chars + [N more]
+            if len(message) > 180:
+                self.console.print(f"  [blue]{message[:150]} [dim]...[{len(message)-150} more][/][/]")
+            else:
+                self.console.print(f"  [blue]{message}[/]")
         elif event_type == "done":
             self.console.print(f"  [green]✓ Done[/]")
         elif event_type == "failed":
@@ -76,6 +80,12 @@ class TUI:
             )
         elif event_type == "max_turns":
             self.console.print(f"  [yellow]{message}[/]")
+        elif event_type == "memory_used":
+            self.console.print(f"  [cyan]{message}[/]")
+        elif event_type == "doom_loop":
+            self.console.print(f"  [bold red]{message}[/]")
+        elif event_type == "memory_tidy":
+            self.console.print(f"  [dim]{message}[/]")
         # === Evolve events ===
         elif event_type == "executor_start":
             self.console.print(f"\n[bold cyan]{message}[/]")
