@@ -185,7 +185,12 @@ def run_react(
     messages = [{"role": "system", "content": system}]
     messages.append({"role": "user", "content": task})
 
-    max_turns = config.agent.max_turns or max_turns_for_task(task)
+    # Use the LARGER of config max_turns and task-based estimate.
+    # This ensures complex tasks (write, build, create) get enough turns
+    # even when config has a small default.
+    task_turns = max_turns_for_task(task)
+    config_turns = config.agent.max_turns or 10
+    max_turns = max(task_turns, config_turns)
     tool_calls = []
     result = ReActResult()
     trace = ExecutionTrace(task=task, total_turns=max_turns)
@@ -343,11 +348,43 @@ def run_react(
         result.trace = trace
         return result
 
-    # Max turns exceeded
-    _emit("max_turns", f"Reached max turns ({max_turns})")
+    # Max turns exceeded — try to salvage partial results
+    _emit("max_turns", f"Reached max turns ({max_turns}), attempting to salvage...")
+
+    # If we have tool results, ask LLM for a final summary based on what we have
+    if tool_calls:
+        _emit("llm_start", f"Turn {max_turns + 1} (salvage)")
+        salvage_messages = list(messages)
+        salvage_messages.append({
+            "role": "user",
+            "content": (
+                "You have reached the maximum number of turns. "
+                "Based on the tool results above, provide your best final answer now.\n"
+                "Output DONE: <your best answer based on available information>"
+            ),
+        })
+        llm_resp = call_llm_detailed(salvage_messages, config.model)
+        if not llm_resp.is_error:
+            response = llm_resp.text
+            done = _parse_done(response)
+            if done:
+                _emit("done", done[:200])
+                result.success = True
+                result.answer = done
+                result.reasoning = llm_resp.reasoning
+                result.tool_calls = tool_calls
+                result.turns = max_turns
+                trace.final_success = True
+                trace.add_error(f"Max turns ({max_turns}) exceeded but salvaged")
+                result.trace = trace
+                return result
+
+    # Could not salvage
+    _emit("failed", f"Max turns ({max_turns}) exceeded, could not complete task")
     result.error = f"Max turns ({max_turns}) exceeded"
     result.tool_calls = tool_calls
     result.turns = max_turns
     trace.final_success = False
+    trace.add_error(f"Max turns ({max_turns}) exceeded — task may need more turns")
     result.trace = trace
     return result

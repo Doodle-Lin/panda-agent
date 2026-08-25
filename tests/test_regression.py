@@ -260,18 +260,18 @@ class TestRegressionEvaluatorJson:
 
 class TestRegressionMaxTurns:
     def test_regression_max_turns_simple(self):
-        assert max_turns_for_task("list files") == 5
-        assert max_turns_for_task("show me the content") == 5
-        assert max_turns_for_task("read this file") == 5
+        assert max_turns_for_task("list files") == 8
+        assert max_turns_for_task("show me the content") == 8
+        assert max_turns_for_task("read this file") == 8
 
     def test_regression_max_turns_complex(self):
-        assert max_turns_for_task("build a web server") == 15
-        assert max_turns_for_task("create a new project") == 15
-        assert max_turns_for_task("fix the bug and deploy") == 15
+        assert max_turns_for_task("build a web server") == 30
+        assert max_turns_for_task("create a new project") == 30
+        assert max_turns_for_task("write a sci-fi story") == 30
 
     def test_regression_max_turns_default(self):
-        assert max_turns_for_task("do something") == 10
-        assert max_turns_for_task("help me") == 10
+        assert max_turns_for_task("do something") == 12
+        assert max_turns_for_task("help me") == 12
 
 
 # ===========================================================================

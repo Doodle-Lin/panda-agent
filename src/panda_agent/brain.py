@@ -68,9 +68,10 @@ def should_retry(tool_name: str, error: str, retry_count: int, max_retries: int)
 def max_turns_for_task(task: str) -> int:
     """Determine max ReAct turns based on task complexity.
 
-    Simple tasks (e.g., list, summarize, read, show): 5 turns.
-    Complex tasks (e.g., build, create, refactor, deploy): 15 turns.
-    Default: 10 turns.
+    Simple tasks (e.g., list, summarize, read, show): 8 turns.
+    Medium tasks (e.g., write short file, fix, patch): 20 turns.
+    Complex tasks (e.g., build, create, deploy, write long content): 30 turns.
+    Default: 12 turns.
     This logic can be evolved by the Improver.
     """
     task_lower = task.lower()
@@ -78,16 +79,23 @@ def max_turns_for_task(task: str) -> int:
         "simple", "quick", "just", "list", "summarize", "summary",
         "read", "show", "describe", "explain", "what", "tell",
     ]
+    medium_keywords = [
+        "fix", "patch", "rename", "move", "delete", "update",
+        "short", "small", "brief",
+    ]
     complex_keywords = [
         "build", "create", "refactor", "deploy", "debug", "analyze",
-        "implement", "fix", "write", "develop", "design", "integrate",
+        "implement", "write", "develop", "design", "integrate",
+        "novel", "story", "article", "report", "essay", "document",
     ]
 
     if any(w in task_lower for w in simple_keywords):
-        return 5
+        return 8
     if any(w in task_lower for w in complex_keywords):
-        return 15
-    return 10
+        return 30
+    if any(w in task_lower for w in medium_keywords):
+        return 20
+    return 12
 
 
 def build_system_prompt(tool_descriptions: str) -> str:
@@ -118,6 +126,14 @@ ReAct Workflow:
 - Observation: review the tool's output.
 - Repeat until you have gathered the actual requested information.
 - Final Answer: summarize the real results obtained from tool calls. Include concrete data (file names, contents, output), not just a status.
+
+OUTPUT FORMAT (critical — your response must follow this):
+- To call a tool, output ONLY: TOOL_CALL: {{"name": "tool_name", "args": {{...}}}}
+- To finish, output ONLY: DONE: <your answer>
+- To give up, output ONLY: FAILED: <reason>
+- Do NOT output prose, explanations, or thinking in your response — put that in your reasoning/thinking field.
+- Your response/content must start with one of: TOOL_CALL:, DONE:, or FAILED:
+- For long content tasks (writing files), call write_file with the full content in one tool call — do NOT write in pieces.
 
 Remember: answering "completed" without tool calls and real data is a critical failure.
 """

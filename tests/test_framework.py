@@ -90,13 +90,13 @@ class TestBrain:
         assert "write_file" in prompt
 
     def test_max_turns_simple(self):
-        assert max_turns_for_task("just list files") == 5
+        assert max_turns_for_task("just list files") == 8
 
     def test_max_turns_complex(self):
-        assert max_turns_for_task("build a web server") == 15
+        assert max_turns_for_task("build a web server") == 30
 
     def test_max_turns_default(self):
-        assert max_turns_for_task("check something") == 10
+        assert max_turns_for_task("check something") == 12
 
 
 # ---------------------------------------------------------------------------
