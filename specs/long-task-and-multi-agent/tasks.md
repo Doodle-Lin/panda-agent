@@ -22,15 +22,17 @@
 - [x] Added rule 7: must use write_file to create files
 - [x] 117/117 passing
 
-### Phase 2: Doom Loop Detection (P2) — simplest, highest impact
-- [ ] Write failing test: 3 identical tool calls → detected
-- [ ] Implement doom loop detection in react.py
-- [ ] Checkpoint: 117+ tests green
+### Phase 2: Doom Loop Detection (P2) — ✅ COMPLETED
+- [x] Write failing test: 3 identical tool calls → detected (6 tests, RED)
+- [x] Implement _check_doom_loop in react.py (GREEN)
+- [x] Integrate into ReAct loop: warn → fail
+- [x] Checkpoint: 123/123 passing
 
-### Phase 3: Soft Limit (P3) — replace hard cutoff
-- [ ] Write failing test: max_turns → inject MAX_STEPS_PROMPT
-- [ ] Implement soft limit in react.py
-- [ ] Checkpoint: 117+ tests green
+### Phase 3: Soft Limit (P3) — ✅ COMPLETED
+- [x] Write failing test: max_turns → inject MAX_STEPS_PROMPT (4 tests, RED)
+- [x] Implement MAX_STEPS_PROMPT constant in react.py
+- [x] Salvage always runs (not just when tool_calls exist)
+- [x] Checkpoint: 127/127 passing
 
 ### Phase 4: Context Compression (P1) — most complex
 - [ ] Write failing test: threshold → compress → continue

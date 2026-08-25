@@ -42,6 +42,53 @@ MAX_STEPS_PROMPT = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Context compression — truncate old tool results when messages get too long
+# Inspired by opencode's compaction.ts + Hermes's prune_tool_results_only()
+# ---------------------------------------------------------------------------
+
+def _estimate_tokens(text: str) -> int:
+    """Cheap token estimation: chars / 4 (English) or chars * 0.5 (CJK heavy).
+
+    Reference: Hermes uses len(text) // 4 as _approx_tokens.
+    """
+    return max(1, len(text) // 4) if text else 0
+
+
+def _compress_messages(
+    messages: list[dict],
+    threshold: int = 20000,
+    preserve_recent: int = 6,
+) -> list[dict]:
+    """Compress messages by truncating old tool results.
+
+    Strategy (simplified from opencode/Hermes):
+    1. If total estimated tokens < threshold → return unchanged
+    2. Preserve system prompt + last `preserve_recent` messages
+    3. For messages in between: truncate user messages containing "Tool result"
+       to first 200 chars + "[truncated]"
+    """
+    total_tokens = sum(_estimate_tokens(m.get("content", "")) for m in messages)
+    if total_tokens < threshold:
+        return list(messages)
+
+    result = list(messages)
+    # Always preserve system prompt (index 0) and last preserve_recent messages
+    compressible_end = len(result) - preserve_recent
+
+    for i in range(1, compressible_end):
+        msg = result[i]
+        if msg["role"] == "user" and "Tool result" in msg.get("content", ""):
+            content = msg["content"]
+            if len(content) > 300:
+                result[i] = {
+                    "role": "user",
+                    "content": content[:200] + "\n[...truncated for context management...]",
+                }
+
+    return result
+
+
 @dataclass
 class ReActResult:
     """Result of a ReAct loop run."""
@@ -234,6 +281,9 @@ def run_react(
 
     for turn in range(1, max_turns + 1):
         _emit("llm_start", f"Turn {turn}/{max_turns}")
+
+        # Context compression: truncate old tool results when messages get too long
+        messages = _compress_messages(messages, threshold=20000, preserve_recent=6)
 
         # Call LLM with detailed response (reasoning + content separated)
         llm_resp = call_llm_detailed(messages, config.model)
