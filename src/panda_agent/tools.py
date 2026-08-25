@@ -63,27 +63,29 @@ def _tool_write_file(path: str, content: str, **kw) -> str:
 
 
 def _tool_search_files(path: str, pattern: str, **kw) -> str:
-    """Search file contents with regex."""
+    """Search file contents with regex — direct pathlib, no subprocess."""
     try:
-        import subprocess as sp
-        result = sp.run(
-            ["python", "-c", f"""
-import sys, re, os
-from pathlib import Path
-root = Path({path!r})
-pat = re.compile({pattern!r})
-for f in root.rglob('*'):
-    if f.is_file() and '__pycache__' not in str(f) and '.git' not in str(f):
-        try:
-            for i, line in enumerate(f.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
-                if pat.search(line):
-                    print(f"{{f}}:{{i}}: {{line.strip()[:120]}}")
-        except: pass
-"""],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
-        )
-        output = result.stdout.strip()
-        return output if output else "No matches found"
+        import re as _re
+        root = Path(path)
+        if not root.exists():
+            return f"Error: path not found: {path}"
+        pat = _re.compile(pattern)
+        results = []
+        for f in root.rglob("*"):
+            if not f.is_file():
+                continue
+            if "__pycache__" in str(f) or ".git" in str(f):
+                continue
+            try:
+                for i, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    if pat.search(line):
+                        results.append(f"{f}:{i}: {line.strip()[:120]}")
+                        if len(results) >= 100:
+                            results.append("...[truncated at 100 matches]")
+                            return "\n".join(results)
+            except Exception:
+                continue
+        return "\n".join(results) if results else "No matches found"
     except Exception as e:
         return f"Error searching: {e}"
 
