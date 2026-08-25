@@ -379,121 +379,137 @@ class Improver:
 
         Validation gate: after patching, re-run the task to check if
         the score actually improved. If not, rollback the patch.
+        Guarantees: source file is always restored on failure, even if
+        an exception occurs mid-check.
         """
         import sys as _sys
         backup_path = source_path.with_suffix(".py.bak")
         shutil.copy2(source_path, backup_path)
-        source = source_path.read_text(encoding="utf-8")
+        original_source = source_path.read_text(encoding="utf-8")
+        source = original_source
 
-        relevant = _extract_relevant(source, evaluation, keywords)
-        eval_json = json.dumps({
-            "score": evaluation.score,
-            "issues": evaluation.issues,
-            "root_cause": evaluation.root_cause,
-            "suggested_changes": evaluation.suggested_changes,
-        }, indent=2, ensure_ascii=False)
+        try:
+            relevant = _extract_relevant(source, evaluation, keywords)
+            eval_json = json.dumps({
+                "score": evaluation.score,
+                "issues": evaluation.issues,
+                "root_cause": evaluation.root_cause,
+                "suggested_changes": evaluation.suggested_changes,
+            }, indent=2, ensure_ascii=False)
 
-        prompt = _IMPROVE_PROMPT.format(
-            evaluation_json=eval_json,
-            source_code=relevant,
-            target_file=source_path.name,
-        )
+            prompt = _IMPROVE_PROMPT.format(
+                evaluation_json=eval_json,
+                source_code=relevant,
+                target_file=source_path.name,
+            )
 
-        max_retries = self.config.agent.max_retries
-        last_test_output = ""
-        full_retry_prompt = prompt
+            max_retries = self.config.agent.max_retries
+            last_test_output = ""
+            full_retry_prompt = prompt
 
-        for attempt in range(1, max_retries + 1):
-            if attempt == 1:
-                response = call_llm(
-                    [{"role": "user", "content": prompt}],
-                    self.config.model,
-                    model=self.config.model.code_model or None,
-                )
-            else:
-                retry_msg = _RETRY_PROMPT.format(test_error=last_test_output)
-                full_retry_prompt = prompt + "\n\n---\n" + retry_msg
-                response = call_llm(
-                    [{"role": "user", "content": full_retry_prompt}],
-                    self.config.model,
-                    model=self.config.model.code_model or None,
-                )
-
-            if response.strip().startswith("NO_CHANGE") or response.startswith("ERROR"):
-                print(f"  [Improver:{source_path.name}] attempt {attempt}: NO_CHANGE/ERROR", file=_sys.stderr)
-                continue
-
-            patch_code = _extract_patch(response)
-            if not patch_code:
-                print(f"  [Improver:{source_path.name}] attempt {attempt}: _extract_patch failed, response[:200]={response[:200]!r}", file=_sys.stderr)
-                continue
-
-            patched = _replace_function(source, patch_code)
-            if patched == source:
-                print(f"  [Improver:{source_path.name}] attempt {attempt}: _replace_function no match, patch[:100]={patch_code[:100]!r}", file=_sys.stderr)
-                continue
-
-            source_path.write_text(patched, encoding="utf-8")
-
-            # Gate 1: pytest must still pass (no syntax errors, no broken imports)
-            passed, test_output = _run_pytest(self.test_path, self.project_root)
-            if not passed:
-                print(f"  [Improver:{source_path.name}] attempt {attempt}: pytest failed, rolling back", file=_sys.stderr)
-                shutil.copy2(backup_path, source_path)
-                source = source_path.read_text(encoding="utf-8")
-                last_test_output = test_output
-                continue
-
-            # Gate 2: behavioral check — re-run task and verify score improved
-            # This is critical: pytest only checks static structure, not agent behavior.
-            # A patch can pass all 34 tests but break the prompt logic.
-            new_score = self._behavioral_check(evaluation)
-
-            if new_score > evaluation.score:
-                # Score improved — keep the patch
-                if new_score >= evaluation.score + 5:
-                    print(f"  [Improver:{source_path.name}] attempt {attempt}: score {evaluation.score:.0f}→{new_score:.0f} ✓ kept", file=_sys.stderr)
-                    backup_path.unlink(missing_ok=True)
-                    return ImprovementResult(
-                        patched=True,
-                        tests_passed=True,
-                        diff=f"Patched {source_path.name}",
-                        explanation=_extract_explanation(response),
-                        test_output=test_output,
-                        attempts=attempt,
-                        score_after=new_score,
+            for attempt in range(1, max_retries + 1):
+                if attempt == 1:
+                    response = call_llm(
+                        [{"role": "user", "content": prompt}],
+                        self.config.model,
+                        model=self.config.model.code_model or None,
                     )
                 else:
-                    # Marginal improvement — keep but note it
-                    print(f"  [Improver:{source_path.name}] attempt {attempt}: score {evaluation.score:.0f}→{new_score:.0f} (marginal, kept)", file=_sys.stderr)
-                    backup_path.unlink(missing_ok=True)
-                    return ImprovementResult(
-                        patched=True,
-                        tests_passed=True,
-                        diff=f"Patched {source_path.name}",
-                        explanation=_extract_explanation(response),
-                        test_output=test_output,
-                        attempts=attempt,
-                        score_after=new_score,
+                    retry_msg = _RETRY_PROMPT.format(test_error=last_test_output)
+                    full_retry_prompt = prompt + "\n\n---\n" + retry_msg
+                    response = call_llm(
+                        [{"role": "user", "content": full_retry_prompt}],
+                        self.config.model,
+                        model=self.config.model.code_model or None,
                     )
-            else:
-                # Score did NOT improve — rollback
-                print(f"  [Improver:{source_path.name}] attempt {attempt}: score {evaluation.score:.0f}→{new_score:.0f} ✗ rolled back", file=_sys.stderr)
-                shutil.copy2(backup_path, source_path)
-                source = source_path.read_text(encoding="utf-8")
-                last_test_output = f"Behavioral check: score went {evaluation.score:.0f}→{new_score:.0f}. Patch made things worse."
 
-        # All attempts failed — restore
-        if backup_path.exists():
-            shutil.copy2(backup_path, source_path)
+                if response.strip().startswith("NO_CHANGE") or response.startswith("ERROR"):
+                    print(f"  [Improver:{source_path.name}] attempt {attempt}: NO_CHANGE/ERROR", file=_sys.stderr)
+                    continue
+
+                patch_code = _extract_patch(response)
+                if not patch_code:
+                    print(f"  [Improver:{source_path.name}] attempt {attempt}: _extract_patch failed, response[:200]={response[:200]!r}", file=_sys.stderr)
+                    continue
+
+                patched = _replace_function(source, patch_code)
+                if patched == source:
+                    print(f"  [Improver:{source_path.name}] attempt {attempt}: _replace_function no match, patch[:100]={patch_code[:100]!r}", file=_sys.stderr)
+                    continue
+
+                # Verify patched code is syntactically valid before writing
+                try:
+                    compile(patched, source_path.name, "exec")
+                except SyntaxError as se:
+                    print(f"  [Improver:{source_path.name}] attempt {attempt}: SyntaxError in patch: {se}", file=_sys.stderr)
+                    last_test_output = f"SyntaxError: {se}"
+                    continue
+
+                source_path.write_text(patched, encoding="utf-8")
+
+                # Gate 1: pytest must still pass
+                passed, test_output = _run_pytest(self.test_path, self.project_root)
+                if not passed:
+                    print(f"  [Improver:{source_path.name}] attempt {attempt}: pytest failed, rolling back", file=_sys.stderr)
+                    source_path.write_text(original_source, encoding="utf-8")
+                    source = original_source
+                    last_test_output = test_output
+                    continue
+
+                # Gate 2: behavioral check
+                new_score = self._behavioral_check(evaluation)
+
+                if new_score > evaluation.score:
+                    if new_score >= evaluation.score + 5:
+                        print(f"  [Improver:{source_path.name}] attempt {attempt}: score {evaluation.score:.0f}→{new_score:.0f} ✓ kept", file=_sys.stderr)
+                        backup_path.unlink(missing_ok=True)
+                        return ImprovementResult(
+                            patched=True,
+                            tests_passed=True,
+                            diff=f"Patched {source_path.name}",
+                            explanation=_extract_explanation(response),
+                            test_output=test_output,
+                            attempts=attempt,
+                            score_after=new_score,
+                        )
+                    else:
+                        print(f"  [Improver:{source_path.name}] attempt {attempt}: score {evaluation.score:.0f}→{new_score:.0f} (marginal, kept)", file=_sys.stderr)
+                        backup_path.unlink(missing_ok=True)
+                        return ImprovementResult(
+                            patched=True,
+                            tests_passed=True,
+                            diff=f"Patched {source_path.name}",
+                            explanation=_extract_explanation(response),
+                            test_output=test_output,
+                            attempts=attempt,
+                            score_after=new_score,
+                        )
+                else:
+                    print(f"  [Improver:{source_path.name}] attempt {attempt}: score {evaluation.score:.0f}→{new_score:.0f} ✗ rolled back", file=_sys.stderr)
+                    source_path.write_text(original_source, encoding="utf-8")
+                    source = original_source
+                    last_test_output = f"Behavioral check: score went {evaluation.score:.0f}→{new_score:.0f}. Patch made things worse."
+
+            # All attempts failed — restore
+            source_path.write_text(original_source, encoding="utf-8")
             backup_path.unlink(missing_ok=True)
-
-        return ImprovementResult(
-            patched=False,
-            tests_passed=True,
-            explanation="No improvement applied",
-            attempts=max_retries,
-        )
+            return ImprovementResult(
+                patched=False,
+                tests_passed=True,
+                explanation="No improvement applied",
+                attempts=max_retries,
+            )
+        except Exception as e:
+            # Safety net: always restore original source on any exception
+            print(f"  [Improver:{source_path.name}] exception: {e}", file=_sys.stderr)
+            source_path.write_text(original_source, encoding="utf-8")
+            backup_path.unlink(missing_ok=True)
+            return ImprovementResult(
+                patched=False,
+                tests_passed=True,
+                explanation=f"Error: {e}",
+                attempts=0,
+            )
 
     def _behavioral_check(self, evaluation: Evaluation) -> float:
         """Re-run a test interaction with patched code and return the new score.
@@ -508,7 +524,7 @@ class Improver:
 
         try:
             test_prompt = "你好"
-            system_prompt = build_system_prompt(get_tool_descriptions(), self.config.agent.max_turns)
+            system_prompt = build_system_prompt(get_tool_descriptions())
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": test_prompt},
