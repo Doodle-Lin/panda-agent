@@ -448,6 +448,10 @@ def run_react(
             continue
 
         # Fallback: treat as done (non-reasoning model with substantive content)
+        # But strip any TOOL_CALL text from the answer — it's not user-facing content
+        clean_answer = re.sub(r"TOOL_CALL:\s*\{.*?\}", "", stripped, flags=re.DOTALL).strip()
+        if clean_answer:
+            stripped = clean_answer
         _emit("done", stripped[:200])  # event display still truncated for terminal
         result.success = True
         result.answer = stripped  # full answer, not truncated

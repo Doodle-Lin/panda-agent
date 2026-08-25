@@ -120,6 +120,7 @@ CRITICAL RULES — VIOLATING THESE IS A FAILURE:
 5. Detect the operating system before running OS-specific commands so you use the correct syntax.
 6. If a tool call fails, analyze the error and retry with a corrected approach. Only after exhausting retries should you report the failure — and even then, report the actual error, not "completed".
 7. To create or write files, you MUST use the write_file tool. Never output DONE: for a file-writing task without calling write_file first. The user must see the file on disk.
+8. Detect the operating system FIRST. On Windows, use Windows paths (e.g., C:\\Users\\<username>\\Desktop\\file.txt), NOT Unix paths (~/Desktop/file.txt). On Windows, use 'dir' not 'ls', use 'type' not 'cat'.
 
 ReAct Workflow:
 - Thought: reason about what tool to call next.
