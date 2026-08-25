@@ -22,6 +22,7 @@ class ModelConfig:
     base_url: str = "http://localhost:8000/v1"
     api_key: str = ""
     max_tokens: int = 8192
+    fallback: str = ""  # fallback model name if primary fails
 
 
 @dataclass
