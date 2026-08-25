@@ -340,6 +340,9 @@ def run_react(
         ctx = memory.retrieve_context(task, top_k=3)
         if ctx:
             system += "\n\n" + ctx
+            # Observable: show user that memory is being used
+            mem_count = ctx.count("[-")  # count memory entries
+            _emit("memory_used", f"💡 Using {mem_count} past experience(s) from memory")
 
     # Get native function calling schemas
     tool_schemas = get_tool_schemas()

@@ -157,9 +157,13 @@ Respond in JSON:
   "structural_reason": ""
 }}
 
-Rules:
-- "lessons" = actionable advice for future similar tasks (e.g. "On Windows, use 'dir %USERPROFILE%\\Desktop' to list desktop files")
-- "recurring_errors" = error patterns that appear more than once across tasks
+Rules for lessons:
+- Each lesson must be a concise, actionable knowledge point (not a narrative)
+- Format: "When X, use Y" or "On Windows, Z is the correct approach" or "Tool A fails on B, use C instead"
+- Include specific commands, paths, or parameters when relevant
+- Example GOOD: "On Windows, use 'dir %USERPROFILE%\\Desktop' to list desktop files"
+- Example BAD: "The agent should be more careful about operating system detection"
+- Maximum 3 lessons, only the most valuable ones
 - "is_structural" = true if the root cause is in the agent's prompt or tools (not the environment)
 - "structural_reason" = if is_structural, explain which function/prompt needs fixing and why
 """
