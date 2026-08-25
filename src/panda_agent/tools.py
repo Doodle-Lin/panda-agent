@@ -80,7 +80,7 @@ for f in root.rglob('*'):
                     print(f"{{f}}:{{i}}: {{line.strip()[:120]}}")
         except: pass
 """],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         output = result.stdout.strip()
         return output if output else "No matches found"
@@ -111,6 +111,8 @@ def _tool_run_command(command: str, timeout: int = 60, **kw) -> str:
             shell=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         output = result.stdout + result.stderr

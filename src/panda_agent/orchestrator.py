@@ -84,22 +84,51 @@ class Evaluator:
             [{"role": "user", "content": prompt}],
             self.config.model,
         )
-        try:
-            # Extract JSON from response
-            m = re.search(r'\{.*\}', response, re.DOTALL)
-            if m:
-                data = json.loads(m.group(0).replace("'", '"'))
-            else:
-                data = {"score": 50, "issues": ["Could not parse evaluation"]}
-        except json.JSONDecodeError:
-            data = {"score": 50, "issues": ["Could not parse evaluation"]}
-
+        data = self._parse_eval_json(response)
         return Evaluation(
             score=float(data.get("score", 50)),
             issues=data.get("issues", []),
             root_cause=data.get("root_cause", ""),
             suggested_changes=data.get("suggested_changes", ""),
         )
+
+    @staticmethod
+    def _parse_eval_json(response: str) -> dict:
+        """Extract evaluation JSON from LLM response, handling markdown blocks,
+        think tags, and multi-segment responses."""
+        if not response or response.startswith("ERROR:"):
+            return {"score": 50, "issues": ["LLM call failed"]}
+
+        # Strip markdown code fences if present
+        cleaned = re.sub(r"```(?:json)?\s*", "", response)
+        cleaned = re.sub(r"</?think>", "", cleaned).strip()
+
+        # Try direct JSON parse first
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Try finding the last balanced JSON object (evaluation JSON is
+        # typically the last thing in the response)
+        # Find all potential JSON starts and try to parse from each
+        for i in range(len(cleaned) - 1, -1, -1):
+            if cleaned[i] == "}":
+                # Walk backwards to find the matching opening brace
+                depth = 0
+                for j in range(i, -1, -1):
+                    if cleaned[j] == "}":
+                        depth += 1
+                    elif cleaned[j] == "{":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(cleaned[j:i + 1])
+                            except json.JSONDecodeError:
+                                break
+                break
+
+        return {"score": 50, "issues": ["Could not parse evaluation response"]}
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +153,7 @@ Output format:
 ```
 PATCH_START
 ```python
-{code_here}
+<your patched code here>
 ```
 PATCH_END
 EXPLANATION: what you changed and why
@@ -211,9 +240,11 @@ def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tupl
             cwd=str(project_root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
-        output = result.stdout + result.stderr
+        output = (result.stdout or "") + (result.stderr or "")
         passed = result.returncode == 0 and "passed" in output
         return passed, output[-500:]
     except subprocess.TimeoutExpired:
