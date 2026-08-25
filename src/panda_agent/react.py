@@ -25,6 +25,23 @@ from .memory import MemoryClient
 from .types import ExecutionTrace, TurnRecord
 
 
+# ---------------------------------------------------------------------------
+# Max steps prompt — injected when max_turns is reached (soft limit)
+# Inspired by opencode's max-steps.ts
+# ---------------------------------------------------------------------------
+
+MAX_STEPS_PROMPT = (
+    "CRITICAL — MAXIMUM STEPS REACHED. "
+    "You have reached the maximum number of turns for this task. "
+    "Tools are now disabled. Respond with text ONLY (no tool calls).\n\n"
+    "Your response MUST include:\n"
+    "1. What you have accomplished so far\n"
+    "2. Any remaining tasks that were not completed\n"
+    "3. Output DONE: <your summary> to finish.\n\n"
+    "Do NOT attempt any tool calls. Respond with DONE: and your summary."
+)
+
+
 @dataclass
 class ReActResult:
     """Result of a ReAct loop run."""
@@ -394,36 +411,31 @@ def run_react(
         result.trace = trace
         return result
 
-    # Max turns exceeded — try to salvage partial results
-    _emit("max_turns", f"Reached max turns ({max_turns}), attempting to salvage...")
+    # Max turns exceeded — inject MAX_STEPS_PROMPT (soft limit, not hard cutoff)
+    _emit("max_turns", f"Reached max turns ({max_turns}), injecting MAX_STEPS_PROMPT...")
 
-    # If we have tool results, ask LLM for a final summary based on what we have
-    if tool_calls:
-        _emit("llm_start", f"Turn {max_turns + 1} (salvage)")
-        salvage_messages = list(messages)
-        salvage_messages.append({
-            "role": "user",
-            "content": (
-                "You have reached the maximum number of turns. "
-                "Based on the tool results above, provide your best final answer now.\n"
-                "Output DONE: <your best answer based on available information>"
-            ),
-        })
-        llm_resp = call_llm_detailed(salvage_messages, config.model)
-        if not llm_resp.is_error:
-            response = llm_resp.text
-            done = _parse_done(response)
-            if done:
-                _emit("done", done[:200])
-                result.success = True
-                result.answer = done
-                result.reasoning = llm_resp.reasoning
-                result.tool_calls = tool_calls
-                result.turns = max_turns
-                trace.final_success = True
-                trace.add_error(f"Max turns ({max_turns}) exceeded but salvaged")
-                result.trace = trace
-                return result
+    # Always try salvage — even without tool calls, LLM may have useful reasoning
+    _emit("llm_start", f"Turn {max_turns + 1} (salvage)")
+    salvage_messages = list(messages)
+    salvage_messages.append({
+        "role": "user",
+        "content": MAX_STEPS_PROMPT,
+    })
+    llm_resp = call_llm_detailed(salvage_messages, config.model)
+    if not llm_resp.is_error:
+        response = llm_resp.text
+        done = _parse_done(response)
+        if done:
+            _emit("done", done[:200])
+            result.success = True
+            result.answer = done
+            result.reasoning = llm_resp.reasoning
+            result.tool_calls = tool_calls
+            result.turns = max_turns
+            trace.final_success = True
+            trace.add_error(f"Max turns ({max_turns}) exceeded but salvaged")
+            result.trace = trace
+            return result
 
     # Could not salvage
     _emit("failed", f"Max turns ({max_turns}) exceeded, could not complete task")
