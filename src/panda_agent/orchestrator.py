@@ -259,8 +259,10 @@ class Learner:
         if self.memory and data.get("lessons"):
             for lesson in data["lessons"][:5]:
                 try:
+                    # Write lesson as-is (no prefix) so retrieval can match
+                    # by semantic similarity to the lesson content itself
                     self.memory.write(
-                        f"Lesson for '{task.instruction[:50]}': {lesson}",
+                        lesson,
                         title=f"lesson:{task.instruction[:30]}",
                         node_type="reference",
                         source="panda_learner",
@@ -732,32 +734,45 @@ class Improver:
         """Verify patched brain.py/tools.py still produces working LLM responses."""
         import sys
         from panda_agent.brain import build_system_prompt
-        from panda_agent.tools import get_tool_descriptions
+        from panda_agent.tools import get_tool_descriptions, get_tool_schemas
 
         try:
-            test_prompt = "你好"
+            test_prompt = "hello"
             system_prompt = build_system_prompt(get_tool_descriptions())
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": test_prompt},
             ]
-            response = call_llm(messages, self.config.model, model=None)
-            if not response or not response.strip():
-                print(f"  [Improver] behavioral check: empty → brain broken", file=sys.stderr)
+            # Use native function calling (tools param) like run_react does
+            from panda_agent.llm import call_llm_detailed
+            tools = get_tool_schemas()
+            resp = call_llm_detailed(messages, self.config.model, tools=tools)
+            if resp.is_error:
+                print(f"  [Improver] behavioral check: LLM error -> brain broken", file=sys.stderr)
                 return 10.0
 
-            resp = response.strip()
-            if len(resp) < 5:
-                print(f"  [Improver] behavioral check: too short ({len(resp)} chars)", file=sys.stderr)
+            response = resp.text
+            if not response or not response.strip():
+                # Native FC may return empty content with tool_calls — that's OK
+                if resp.tool_calls:
+                    print(f"  [Improver] behavioral check: tool_calls returned (valid)", file=sys.stderr)
+                    return 100.0
+                print(f"  [Improver] behavioral check: empty -> brain broken", file=sys.stderr)
+                return 10.0
+
+            resp_text = response.strip()
+            if len(resp_text) < 5 and not resp.tool_calls:
+                print(f"  [Improver] behavioral check: too short ({len(resp_text)} chars)", file=sys.stderr)
                 return 30.0
 
-            has_done = "DONE:" in resp or "DONE：" in resp
-            has_tool = "TOOL_CALL:" in resp
-            if has_done or has_tool:
-                print(f"  [Improver] behavioral check: valid agent format ✓", file=sys.stderr)
+            # Check for DONE/FAILED markers (text protocol for completion)
+            has_done = "DONE:" in resp_text or "DONE：" in resp_text
+            has_tool_calls = bool(resp.tool_calls)
+            if has_done or has_tool_calls:
+                print(f"  [Improver] behavioral check: valid agent format", file=sys.stderr)
                 return 100.0
 
-            print(f"  [Improver] behavioral check: LLM responds ({len(resp)} chars), no format markers", file=sys.stderr)
+            print(f"  [Improver] behavioral check: LLM responds ({len(resp_text)} chars), no format markers", file=sys.stderr)
             return 80.0
         except Exception as e:
             print(f"  [Improver] behavioral check error: {e}", file=sys.stderr)
