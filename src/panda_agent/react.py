@@ -283,8 +283,22 @@ def _self_repair(error: str, tool_name: str, tool_args: dict, config: Config) ->
     return tool_name, tool_args, f"no auto-fix for {error_type}"
 
 
-# ---------------------------------------------------------------------------
-# ReAct loop
+def _should_write_memory(tool_calls: list[dict], had_repair: bool) -> bool:
+    """Decide if a task result is valuable enough to write to memory.
+
+    Only write when the experience is genuinely useful:
+    - Self-repair kicked in (tool failed then recovered → learned a fix)
+    - Multi-step task (3+ tool calls → complex workflow worth remembering)
+    - NOT for simple 1-step tasks (just reading/listing → no insight)
+    - NOT for chat/greeting (0 tool calls → no action taken)
+    """
+    if had_repair:
+        return True
+    if len(tool_calls) >= 3:
+        return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 
 def run_react(
@@ -340,6 +354,7 @@ def run_react(
     config_turns = config.agent.max_turns or 10
     max_turns = max(task_turns, config_turns)
     tool_calls = []
+    had_repair = False
     result = ReActResult()
     trace = ExecutionTrace(task=task, total_turns=max_turns)
 
@@ -371,16 +386,11 @@ def run_react(
                 reasoning_display += "..."
             _emit_reasoning(f"Turn {turn}", reasoning_display)
 
-        if not response or not response.strip():
-            _emit("llm_error", "Empty response")
-            trace.add_error("Empty LLM response")
-            messages.append({"role": "assistant", "content": ""})
-            messages.append({"role": "user", "content": "Your response was empty. Please call a tool or say DONE."})
-            continue
-
         turn_record = TurnRecord(turn=turn, reasoning=llm_resp.reasoning[:200])
 
         # === Priority 1: Native function calling (tool_calls from API) ===
+        # Check tool_calls BEFORE response emptiness — native FC may return
+        # empty content with tool_calls populated
         if llm_resp.tool_calls:
             for tc in llm_resp.tool_calls:
                 tool_name = tc["name"]
@@ -403,17 +413,18 @@ def run_react(
                         _emit("self_repair", f"  ↳ Self-repair: {strategy}")
                         turn_record.self_repaired = True
                         turn_record.repair_strategy = strategy
+                        had_repair = True
                         tool_result = execute_tool(new_name, new_args)
                         _emit("tool_call", f"  ↳ {new_name}({new_args})")
 
                         if not (tool_result.startswith("Error") or tool_result.startswith("ERROR")):
                             _emit("tool_result", f"  ↳ {tool_result[:200]}")
                             tool_calls.append({"name": new_name, "args": new_args, "result": tool_result})
-                            trace.add_repair(f"Turn {turn}: {strategy} → recovered")
+                            trace.add_repair(f"Turn {turn}: {strategy} -> recovered")
                         else:
                             _emit("tool_result", f"  ↳ Still failing: {tool_result[:200]}")
                             tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
-                    else:
+                            trace.add_repair(f"Turn {turn}: {strategy} -> still failing")
                         _emit("tool_result", tool_result[:200])
                         tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
                 else:
@@ -467,6 +478,14 @@ def run_react(
             trace.turns.append(turn_record)
             continue
 
+        # No tool_calls from API — check if text response is empty
+        if not response or not response.strip():
+            _emit("llm_error", "Empty response")
+            trace.add_error("Empty LLM response")
+            messages.append({"role": "assistant", "content": ""})
+            messages.append({"role": "user", "content": "Your response was empty. Please call a tool or say DONE."})
+            continue
+
         # === Priority 2: Text protocol fallback (TOOL_CALL: {json}) ===
         tool_call = _parse_tool_call(response)
         if tool_call:
@@ -489,19 +508,18 @@ def run_react(
                     _emit("self_repair", f"  ↳ Self-repair: {strategy}")
                     turn_record.self_repaired = True
                     turn_record.repair_strategy = strategy
-
-                    # Retry with repaired call
+                    had_repair = True
                     tool_result = execute_tool(new_name, new_args)
                     _emit("tool_call", f"  ↳ {new_name}({new_args})")
 
                     if not (tool_result.startswith("Error") or tool_result.startswith("ERROR")):
                         _emit("tool_result", f"  ↳ {tool_result[:200]}")
                         tool_calls.append({"name": new_name, "args": new_args, "result": tool_result})
-                        trace.add_repair(f"Turn {turn}: {strategy} → recovered")
+                        trace.add_repair(f"Turn {turn}: {strategy} -> recovered")
                     else:
                         _emit("tool_result", f"  ↳ Still failing: {tool_result[:200]}")
                         tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
-                        trace.add_repair(f"Turn {turn}: {strategy} → still failing")
+                        trace.add_repair(f"Turn {turn}: {strategy} -> still failing")
                 else:
                     _emit("tool_result", tool_result[:200])
                     tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
@@ -553,7 +571,7 @@ def run_react(
             result.turns = turn
             trace.final_success = True
             trace.turns.append(turn_record)
-            if memory and config.memory.auto_write:
+            if memory and config.memory.auto_write and _should_write_memory(tool_calls, had_repair):
                 memory.write(f"Task: {task}\nResult: {done}", title=task[:50])
             result.trace = trace
             return result
@@ -611,7 +629,7 @@ def run_react(
         result.turns = turn
         trace.final_success = True
         trace.turns.append(turn_record)
-        if memory and config.memory.auto_write:
+        if memory and config.memory.auto_write and _should_write_memory(tool_calls, had_repair):
             memory.write(f"Task: {task}\nResult: {stripped[:200]}", title=task[:50])
         result.trace = trace
         return result

@@ -300,7 +300,7 @@ class TestRegressionShouldRetry:
 
 class TestRegressionAutoWriteMemory:
     def test_regression_auto_write_memory_on_done(self):
-        """When auto_write=True, memory.write should be called on DONE."""
+        """When auto_write=True and task is complex (3+ tool calls), memory.write should be called on DONE."""
         config = _mock_config()
         config.memory.enabled = True
         config.memory.auto_write = True
@@ -309,9 +309,16 @@ class TestRegressionAutoWriteMemory:
         mock_memory.retrieve_context.return_value = ""
         mock_memory.write.return_value = {"id": "test"}
 
-        with patch("panda_agent.react.call_llm_detailed",
-                   return_value=LLMResponse(content="DONE: completed task", reasoning="")):
-            result = run_react("test task", config, memory=mock_memory)
+        # 3 tool calls to trigger memory write (new strategy: only 3+ calls writes)
+        resps = [
+            LLMResponse(content="", reasoning="", tool_calls=[{"id": "c1", "name": "list_files", "args": {"path": "."}}]),
+            LLMResponse(content="", reasoning="", tool_calls=[{"id": "c2", "name": "read_file", "args": {"path": "a.txt"}}]),
+            LLMResponse(content="", reasoning="", tool_calls=[{"id": "c3", "name": "write_file", "args": {"path": "b.txt", "content": "x"}}]),
+            LLMResponse(content="DONE: completed task", reasoning="", tool_calls=[]),
+        ]
+        with patch("panda_agent.react.call_llm_detailed", side_effect=resps):
+            with patch("panda_agent.react.execute_tool", side_effect=["f1\nf2", "content", "Wrote 1 chars"]):
+                result = run_react("test task", config, memory=mock_memory)
 
         assert result.success is True
         mock_memory.write.assert_called_once()
