@@ -91,5 +91,22 @@ def max_turns_for_task(task: str) -> int:
 
 
 def build_system_prompt(tool_descriptions: str) -> str:
-    """Build the system prompt with tool descriptions injected."""
-    return SYSTEM_PROMPT.format(tool_descriptions=tool_descriptions)
+    """Build the system prompt with tool descriptions injected.
+    
+    Includes explicit instructions to ensure the agent:
+    - Uses tools to retrieve information when the task requires it
+    - Includes actual results in the final answer, not just 'completed'
+    - Verifies task completion before reporting success
+    """
+    base_prompt = SYSTEM_PROMPT.format(tool_descriptions=tool_descriptions)
+    additional_instructions = """
+
+CRITICAL RULES FOR TASK COMPLETION:
+1. You MUST use available tools to retrieve any information requested by the user. Never answer from memory or assumptions when tools can provide the actual data.
+2. Your final answer MUST contain the actual requested information (e.g., file names, contents, results). Never respond with just "completed", "done", or similar without including the substantive results.
+3. Before marking a task as complete, verify that you have actually performed the required operations and have the results to share.
+4. If a task asks you to list, show, or retrieve something, you MUST call the appropriate tool first and then present the results in your final answer.
+5. A task is NOT complete until you have both executed the necessary tool calls AND presented the retrieved information in your final response.
+"""
+    return base_prompt + additional_instructions
+

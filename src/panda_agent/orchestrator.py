@@ -236,18 +236,41 @@ def _extract_relevant(source: str, eval_data: Evaluation, keywords: list[str]) -
 
 
 def _extract_patch(response: str) -> str:
-    """Extract code between PATCH_START and PATCH_END."""
+    """Extract patched code from LLM response.
+
+    Supports multiple formats:
+    1. PATCH_START ```python ... ``` PATCH_END
+    2. PATCH_START ... PATCH_END
+    3. ```python ... ``` (without PATCH_START/END)
+    4. ``` ... ``` (generic code fence)
+    """
+    # Format 1: PATCH_START with python code fence
     m = re.search(r"PATCH_START\s*```python\n(.*?)```", response, re.DOTALL)
     if m:
         return m.group(1).strip()
+    # Format 2: PATCH_START ... PATCH_END (may contain code fence)
     m = re.search(r"PATCH_START\n(.*?)PATCH_END", response, re.DOTALL)
     if m:
         code = m.group(1).strip()
         if code.startswith("```python"):
             code = re.sub(r"^```python\n?", "", code)
+        elif code.startswith("```"):
+            code = re.sub(r"^```\n?", "", code)
         if code.endswith("```"):
             code = code[:-3].strip()
         return code
+    # Format 3: python code fence without PATCH_START/END
+    m = re.search(r"```python\n(.*?)```", response, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Format 4: generic code fence
+    m = re.search(r"```\n?(def \w+.*?)```", response, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # Format 5: raw function definition (no fences at all)
+    m = re.search(r"(def \w+\([^)]*\).*?)(?=\n\n(?:EXPLANATION|```|\Z)|\Z)", response, re.DOTALL)
+    if m:
+        return m.group(1).strip()
     return ""
 
 
