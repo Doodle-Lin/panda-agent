@@ -1,0 +1,9 @@
+Invoke-WebRequest : 基础连接已经关闭: 发送时发生错误。
+At line:1 char:2
++ (Invoke-WebRequest -Uri 'https://en.wikipedia.org/wiki/Quantum_comput ...
++  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebRequest:Http
+WebRequest) [Invoke-WebRequest], WebException
+    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.PowerShel
+l.Commands.InvokeWebRequestCommand
+ 
