@@ -1,36 +1,26 @@
-"""PandaAgent ...Generic 3-Agent Self-Evolution Framework.
+"""PandaAgent — Self-Evolving Agent Framework.
 
-Three agents form a closed loop:
-  Executor   →runs tools to accomplish a task
-  Evaluator  →scores the result and reports issues
-  Improver   →patches tool code based on evaluation, tests, keeps/reverts
-
-The Orchestrator drives the loop until target_score or max_rounds.
+A CLI agent that can execute tasks, remember across sessions, and
+evolve its own brain through a 3-agent self-supervision loop.
 """
 
-from .types import (
-    Task,
-    ExecutionResult,
-    Evaluation,
-    ImprovementResult,
-    EvolutionResult,
-    Event,
-)
-from .executor import Executor
-from .evaluator import Evaluator
-from .improver import Improver
-from .orchestrator import run_evolution
+from .config import Config, load_config, save_config
+from .llm import call_llm, call_llm_simple
+from .brain import build_system_prompt, SYSTEM_PROMPT
+from .tools import TOOLS, execute_tool, get_tool_descriptions
+from .react import run_react, ReActResult
+from .memory import MemoryClient
+from .tui import TUI
+from .types import Task, ExecutionResult, Evaluation, ImprovementResult, EvolutionResult
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
-    "Task",
-    "ExecutionResult",
-    "Evaluation",
-    "ImprovementResult",
-    "EvolutionResult",
-    "Event",
-    "Executor",
-    "Evaluator",
-    "Improver",
-    "run_evolution",
+    "Config", "load_config", "save_config",
+    "call_llm", "call_llm_simple",
+    "build_system_prompt", "SYSTEM_PROMPT",
+    "TOOLS", "execute_tool", "get_tool_descriptions",
+    "run_react", "ReActResult",
+    "MemoryClient",
+    "TUI",
+    "Task", "ExecutionResult", "Evaluation", "ImprovementResult", "EvolutionResult",
 ]

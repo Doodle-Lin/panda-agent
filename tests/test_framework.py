@@ -1,6 +1,6 @@
-"""Tests for the PandaAgent framework core —types, orchestrator, improver.
+"""Tests for PandaAgent framework — types, config, tools, react, orchestrator.
 
-Uses mock agents to verify the loop logic without real API calls.
+Uses mocks for LLM calls — no real API needed.
 """
 
 import pytest
@@ -8,83 +8,15 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from panda_agent.types import (
-    Task,
-    ExecutionResult,
-    Evaluation,
-    ImprovementResult,
-    RoundResult,
-    EvolutionResult,
-    Event,
+    Task, ExecutionResult, Evaluation, ImprovementResult,
+    RoundResult, EvolutionResult, Event,
 )
-from panda_agent.executor import Executor
-from panda_agent.evaluator import Evaluator
-from panda_agent.improver import Improver, _extract_patch, _replace_function
-from panda_agent.orchestrator import run_evolution
-from panda_agent.llm import LLMConfig, call_llm
-
-
-# ---------------------------------------------------------------------------
-# Mock agents for testing
-# ---------------------------------------------------------------------------
-
-class MockExecutor(Executor):
-    def __init__(self, output_path="/tmp/mock_output.png"):
-        self._output = output_path
-        self.call_count = 0
-
-    def execute(self, task: Task) -> ExecutionResult:
-        self.call_count += 1
-        return ExecutionResult(
-            output_path=self._output,
-            tool_calls=[{"name": "mock_tool", "args": {}}],
-        )
-
-
-class MockEvaluator(Evaluator):
-    def __init__(self, scores: list[float]):
-        self._scores = scores
-        self._idx = 0
-
-    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation:
-        score = self._scores[min(self._idx, len(self._scores) - 1)]
-        self._idx += 1
-        return Evaluation(
-            score=score,
-            issues=["mock issue"],
-            root_cause="mock root cause",
-            suggested_changes="mock suggestion",
-        )
-
-
-class MockImprover(Improver):
-    def __init__(self, patched_results: list[ImprovementResult]):
-        self._results = patched_results
-        self._idx = 0
-
-    @property
-    def target_source_path(self) -> Path:
-        return Path("/tmp/mock_tools.py")
-
-    @property
-    def test_path(self) -> Path:
-        return Path("/tmp/mock_test.py")
-
-    @property
-    def project_root(self) -> Path:
-        return Path("/tmp")
-
-    @property
-    def llm_config(self) -> LLMConfig:
-        return LLMConfig(base_url="http://test/v1", api_key="test", model="test")
-
-    @property
-    def max_retries(self) -> int:
-        return 1
-
-    def improve(self, evaluation: Evaluation) -> ImprovementResult:
-        result = self._results[min(self._idx, len(self._results) - 1)]
-        self._idx += 1
-        return result
+from panda_agent.config import Config, ModelConfig, load_config, save_config
+from panda_agent.llm import call_llm, call_llm_simple
+from panda_agent.brain import build_system_prompt, SYSTEM_PROMPT, max_turns_for_task
+from panda_agent.tools import TOOLS, execute_tool, get_tool_descriptions
+from panda_agent.react import run_react, _parse_tool_call, _parse_done, _parse_failed
+from panda_agent.memory import MemoryClient
 
 
 # ---------------------------------------------------------------------------
@@ -93,245 +25,158 @@ class MockImprover(Improver):
 
 class TestTypes:
     def test_task_defaults(self):
-        t = Task(input_path="/img.jpg", instruction="blur background")
+        t = Task()
+        assert t.input_path == ""
         assert t.metadata == {}
 
     def test_execution_result_defaults(self):
-        r = ExecutionResult(output_path="/out.jpg")
+        r = ExecutionResult()
         assert r.success is True
         assert r.error is None
-        assert r.tool_calls == []
 
     def test_evaluation_defaults(self):
-        e = Evaluation(score=85)
+        e = Evaluation()
+        assert e.score == 0.0
         assert e.issues == []
-        assert e.root_cause == ""
-        assert e.dimensions == {}
 
-    def test_improvement_result_defaults(self):
-        r = ImprovementResult()
-        assert r.patched is False
-        assert r.reverted is False
-        assert r.attempts == 0
-
-    def test_event_creation(self):
+    def test_event(self):
         ev = Event(type="test", message="hello", round=1)
         assert ev.type == "test"
         assert ev.data == {}
 
-    def test_round_result(self):
-        r = RoundResult(round_num=1)
-        assert r.execution is None
-        assert r.evaluation is None
 
-    def test_evolution_result_defaults(self):
-        r = EvolutionResult()
-        assert r.rounds == []
-        assert r.final_score == 0.0
-        assert r.total_patches == 0
+# ---------------------------------------------------------------------------
+# Config tests
+# ---------------------------------------------------------------------------
+
+class TestConfig:
+    def test_model_config_defaults(self):
+        c = ModelConfig()
+        assert c.default == "gpt-4o"
+        assert c.max_tokens == 8192
+
+    def test_config_defaults(self):
+        c = Config()
+        assert c.model.default == "gpt-4o"
+        assert c.agent.max_turns == 10
+        assert c.memory.enabled is True
+        assert c.evolution.improve_brain is True
+
+    def test_load_config_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PANDA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.model.default == "gpt-4o"
+
+    def test_save_and_load(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PANDA_HOME", str(tmp_path))
+        c = Config()
+        c.model.default = "test-model"
+        save_config(c)
+        loaded = load_config()
+        assert loaded.model.default == "test-model"
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator tests
+# Brain tests
 # ---------------------------------------------------------------------------
 
-class TestOrchestrator:
-    def test_target_reached_first_round(self):
-        """Score >= target on round 1 →stop immediately."""
-        executor = MockExecutor()
-        evaluator = MockEvaluator([95.0])
-        improver = MockImprover([])
+class TestBrain:
+    def test_system_prompt_has_tools_placeholder(self):
+        assert "{tool_descriptions}" in SYSTEM_PROMPT
 
-        result = run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=3,
-        )
+    def test_build_system_prompt(self):
+        prompt = build_system_prompt("- read_file: read\n- write_file: write")
+        assert "read_file" in prompt
+        assert "write_file" in prompt
 
-        assert result.target_reached is True
-        assert len(result.rounds) == 1
-        assert result.final_score == 95.0
-        assert result.total_patches == 0
+    def test_max_turns_simple(self):
+        assert max_turns_for_task("just list files") == 5
 
-    def test_max_rounds_exhausted(self):
-        """Score never reaches target →run all rounds."""
-        executor = MockExecutor()
-        evaluator = MockEvaluator([80.0, 80.0, 80.0])
-        improver = MockImprover([
-            ImprovementResult(patched=False, tests_passed=True, attempts=1),
-            ImprovementResult(patched=False, tests_passed=True, attempts=1),
-        ])
+    def test_max_turns_complex(self):
+        assert max_turns_for_task("build a web server") == 15
 
-        result = run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=3,
-        )
-
-        assert result.target_reached is False
-        assert len(result.rounds) == 3
-        assert result.final_score == 80.0
-
-    def test_improvement_applied(self):
-        """Improver patches code →patches counted."""
-        executor = MockExecutor()
-        evaluator = MockEvaluator([80.0, 95.0])
-        improver = MockImprover([
-            ImprovementResult(patched=True, tests_passed=True, attempts=2),
-        ])
-
-        result = run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=3,
-        )
-
-        assert result.total_patches == 1
-        assert result.target_reached is True
-        assert len(result.rounds) == 2
-
-    def test_improver_skipped_last_round(self):
-        """Last round →no improvement attempt."""
-        executor = MockExecutor()
-        evaluator = MockEvaluator([80.0, 80.0, 80.0])
-        improver = MockImprover([
-            ImprovementResult(patched=False, tests_passed=True, attempts=1),
-            ImprovementResult(patched=False, tests_passed=True, attempts=1),
-        ])
-
-        result = run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=3,
-        )
-
-        # Improver should only be called on rounds 1 and 2 (not 3)
-        assert improver._idx == 2
-
-    def test_events_emitted(self):
-        """Events are emitted for each step."""
-        events = []
-        executor = MockExecutor()
-        evaluator = MockEvaluator([95.0])
-        improver = MockImprover([])
-
-        run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=3,
-            on_event=lambda ev: events.append(ev),
-        )
-
-        types = [e.type for e in events]
-        assert "executor_start" in types
-        assert "executor_done" in types
-        assert "evaluator_start" in types
-        assert "evaluator_done" in types
-        assert "target_reached" in types
-
-    def test_improver_exception_handled(self):
-        """Improver raising exception →loop continues."""
-        class CrashingImprover(MockImprover):
-            def improve(self, evaluation):
-                raise RuntimeError("crash")
-
-        executor = MockExecutor()
-        evaluator = MockEvaluator([80.0, 80.0])
-        improver = CrashingImprover([])
-
-        result = run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=2,
-        )
-
-        assert result.target_reached is False
-        assert len(result.rounds) == 2
-
-    def test_best_score_tracked(self):
-        """Best score across rounds is tracked."""
-        executor = MockExecutor()
-        evaluator = MockEvaluator([70.0, 85.0, 75.0])
-        improver = MockImprover([
-            ImprovementResult(patched=False, tests_passed=True, attempts=1),
-            ImprovementResult(patched=False, tests_passed=True, attempts=1),
-        ])
-
-        result = run_evolution(
-            executor, evaluator, improver,
-            Task(input_path="/img.jpg", instruction="test"),
-            target_score=95.0,
-            max_rounds=3,
-        )
-
-        assert result.final_score == 85.0
+    def test_max_turns_default(self):
+        assert max_turns_for_task("check something") == 10
 
 
 # ---------------------------------------------------------------------------
-# Improver utility tests
+# Tools tests
 # ---------------------------------------------------------------------------
 
-class TestImproverUtils:
-    def test_extract_patch_with_markers(self):
-        response = """Some text
-PATCH_START
-```python
-def foo():
-    return 42
-```
-PATCH_END
-EXPLANATION: changed foo
-"""
-        patch = _extract_patch(response)
-        assert "def foo" in patch
-        assert "return 42" in patch
+class TestTools:
+    def test_tools_registered(self):
+        assert "read_file" in TOOLS
+        assert "write_file" in TOOLS
+        assert "search_files" in TOOLS
+        assert "run_command" in TOOLS
 
-    def test_extract_patch_no_markers(self):
-        response = "NO_CHANGE"
-        assert _extract_patch(response) == ""
+    def test_get_tool_descriptions(self):
+        desc = get_tool_descriptions()
+        assert "read_file" in desc
+        assert "write_file" in desc
 
-    def test_replace_function(self):
-        source = """def foo():
-    return 1
+    def test_execute_read_file(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello world")
+        result = execute_tool("read_file", {"path": str(f)})
+        assert "hello world" in result
 
-def bar():
-    return 2
-"""
-        new_code = "def foo():\n    return 42\n"
-        result = _replace_function(source, new_code)
-        assert "return 42" in result
-        assert "def bar" in result
+    def test_execute_write_file(self, tmp_path):
+        path = tmp_path / "out.txt"
+        result = execute_tool("write_file", {"path": str(path), "content": "test"})
+        assert "Wrote" in result
+        assert path.read_text() == "test"
 
-    def test_replace_function_not_found(self):
-        source = "def foo():\n    return 1\n"
-        new_code = "def baz():\n    return 2\n"
-        result = _replace_function(source, new_code)
-        assert result == source  # unchanged
+    def test_execute_unknown_tool(self):
+        result = execute_tool("nonexistent", {})
+        assert "unknown tool" in result
+
+    def test_execute_list_files(self, tmp_path):
+        (tmp_path / "a.txt").write_text("a")
+        result = execute_tool("list_files", {"path": str(tmp_path)})
+        assert "a.txt" in result
+
+    def test_execute_patch_file(self, tmp_path):
+        f = tmp_path / "test.txt"
+        f.write_text("hello old world")
+        result = execute_tool("patch_file", {"path": str(f), "old_string": "old", "new_string": "new"})
+        assert "Patched" in result
+        assert "hello new world" in f.read_text()
 
 
 # ---------------------------------------------------------------------------
-# LLM caller tests (mocked)
+# React parsing tests
+# ---------------------------------------------------------------------------
+
+class TestReactParsing:
+    def test_parse_tool_call(self):
+        text = 'TOOL_CALL: {"name": "read_file", "args": {"path": "test.py"}}'
+        result = _parse_tool_call(text)
+        assert result["name"] == "read_file"
+        assert result["args"]["path"] == "test.py"
+
+    def test_parse_done(self):
+        text = "DONE: task completed successfully"
+        assert _parse_done(text) == "task completed successfully"
+
+    def test_parse_failed(self):
+        text = "FAILED: could not find file"
+        assert _parse_failed(text) == "could not find file"
+
+    def test_parse_no_tool_call(self):
+        assert _parse_tool_call("just thinking...") is None
+
+    def test_parse_no_done(self):
+        assert _parse_done("thinking...") is None
+
+
+# ---------------------------------------------------------------------------
+# LLM tests (mocked)
 # ---------------------------------------------------------------------------
 
 class TestLLM:
-    def test_llm_config_defaults(self):
-        config = LLMConfig(
-            base_url="http://test/v1",
-            api_key="test-key",
-            model="test-model",
-        )
-        assert config.max_tokens == 8192
-        assert config.temperature == 0.2
-
     @patch("panda_agent.llm.requests.post")
     def test_call_llm_content(self, mock_post):
-        """Non-reasoning model: content has output."""
         mock_resp = MagicMock()
         mock_resp.iter_lines.return_value = [
             'data: {"choices":[{"delta":{"content":"hello"}}]}',
@@ -341,34 +186,73 @@ class TestLLM:
         mock_resp.raise_for_status = MagicMock()
         mock_post.return_value = mock_resp
 
-        config = LLMConfig(base_url="http://test/v1", api_key="k", model="m")
-        result = call_llm("test prompt", config)
+        config = ModelConfig(base_url="http://test/v1", api_key="k", default="m")
+        result = call_llm([{"role": "user", "content": "hi"}], config)
         assert result == "hello world"
 
     @patch("panda_agent.llm.requests.post")
     def test_call_llm_reasoning_fallback(self, mock_post):
-        """Reasoning model: content empty, reasoning_content has output."""
         mock_resp = MagicMock()
         mock_resp.iter_lines.return_value = [
-            'data: {"choices":[{"delta":{"content":"","reasoning_content":"thinking..."}}]}',
-            'data: {"choices":[{"delta":{"content":"","reasoning_content":" answer"}}]}',
+            'data: {"choices":[{"delta":{"content":"","reasoning_content":"thinking"}}]}',
             "data: [DONE]",
         ]
         mock_resp.raise_for_status = MagicMock()
         mock_post.return_value = mock_resp
 
-        config = LLMConfig(base_url="http://test/v1", api_key="k", model="m")
-        result = call_llm("test prompt", config)
-        assert "thinking" in result
-        assert "answer" in result
+        config = ModelConfig(base_url="http://test/v1", api_key="k", default="m")
+        result = call_llm([{"role": "user", "content": "hi"}], config)
+        assert result == "thinking"
 
     @patch("panda_agent.llm.requests.post")
     def test_call_llm_timeout(self, mock_post):
-        """Timeout →returns NO_CHANGE error."""
         import requests as req
         mock_post.side_effect = req.Timeout("timeout")
+        config = ModelConfig(base_url="http://test/v1", api_key="k", default="m")
+        result = call_llm([{"role": "user", "content": "hi"}], config)
+        assert "ERROR" in result
 
-        config = LLMConfig(base_url="http://test/v1", api_key="k", model="m")
-        result = call_llm("test", config)
-        assert "NO_CHANGE" in result
-        assert "timeout" in result.lower()
+
+# ---------------------------------------------------------------------------
+# Memory tests (mocked)
+# ---------------------------------------------------------------------------
+
+class TestMemory:
+    @patch("panda_agent.memory.requests.post")
+    def test_retrieve(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"results": [{"content": "test", "score": 0.9}]}
+        mock_resp.raise_for_status = MagicMock()
+        mock_post.return_value = mock_resp
+
+        client = MemoryClient()
+        results = client.retrieve("query")
+        assert len(results) == 1
+        assert results[0]["score"] == 0.9
+
+    @patch("panda_agent.memory.requests.get")
+    def test_stats_not_running(self, mock_get):
+        import requests as req
+        mock_get.side_effect = req.ConnectionError("no server")
+        client = MemoryClient()
+        stats = client.stats()
+        assert "error" in stats
+
+    @patch("panda_agent.memory.requests.get")
+    def test_is_available_false(self, mock_get):
+        import requests as req
+        mock_get.side_effect = req.ConnectionError("no server")
+        client = MemoryClient()
+        assert client.is_available() is False
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator tests
+# ---------------------------------------------------------------------------
+
+class TestOrchestrator:
+    def test_evolution_result_defaults(self):
+        r = EvolutionResult()
+        assert r.rounds == []
+        assert r.final_score == 0.0
