@@ -68,13 +68,24 @@ def should_retry(tool_name: str, error: str, retry_count: int, max_retries: int)
 def max_turns_for_task(task: str) -> int:
     """Determine max ReAct turns based on task complexity.
 
-    Simple tasks: 5 turns. Complex tasks: 15 turns.
+    Simple tasks (e.g., list, summarize, read, show): 5 turns.
+    Complex tasks (e.g., build, create, refactor, deploy): 15 turns.
+    Default: 10 turns.
     This logic can be evolved by the Improver.
     """
     task_lower = task.lower()
-    if any(w in task_lower for w in ["simple", "quick", "just", "list"]):
+    simple_keywords = [
+        "simple", "quick", "just", "list", "summarize", "summary",
+        "read", "show", "describe", "explain", "what", "tell",
+    ]
+    complex_keywords = [
+        "build", "create", "refactor", "deploy", "debug", "analyze",
+        "implement", "fix", "write", "develop", "design", "integrate",
+    ]
+
+    if any(w in task_lower for w in simple_keywords):
         return 5
-    if any(w in task_lower for w in ["build", "create", "refactor", "deploy", "debug"]):
+    if any(w in task_lower for w in complex_keywords):
         return 15
     return 10
 

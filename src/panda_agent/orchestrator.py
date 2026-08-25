@@ -353,6 +353,7 @@ class Improver:
         self, source_path: Path, evaluation: Evaluation, keywords: list[str]
     ) -> ImprovementResult:
         """Improve a single source file."""
+        import sys as _sys
         backup_path = source_path.with_suffix(".py.bak")
         shutil.copy2(source_path, backup_path)
         source = source_path.read_text(encoding="utf-8")
@@ -373,6 +374,7 @@ class Improver:
 
         max_retries = self.config.agent.max_retries
         last_test_output = ""
+        full_retry_prompt = prompt  # Include full context in retries
 
         for attempt in range(1, max_retries + 1):
             if attempt == 1:
@@ -382,22 +384,27 @@ class Improver:
                     model=self.config.model.code_model or None,
                 )
             else:
-                retry_prompt = _RETRY_PROMPT.format(test_error=last_test_output)
+                retry_msg = _RETRY_PROMPT.format(test_error=last_test_output)
+                # Re-send full context + retry info
+                full_retry_prompt = prompt + "\n\n---\n" + retry_msg
                 response = call_llm(
-                    [{"role": "user", "content": retry_prompt}],
+                    [{"role": "user", "content": full_retry_prompt}],
                     self.config.model,
                     model=self.config.model.code_model or None,
                 )
 
             if response.strip().startswith("NO_CHANGE") or response.startswith("ERROR"):
+                print(f"  [Improver:{source_path.name}] attempt {attempt}: NO_CHANGE/ERROR", file=_sys.stderr)
                 continue
 
             patch_code = _extract_patch(response)
             if not patch_code:
+                print(f"  [Improver:{source_path.name}] attempt {attempt}: _extract_patch failed, response[:200]={response[:200]!r}", file=_sys.stderr)
                 continue
 
             patched = _replace_function(source, patch_code)
             if patched == source:
+                print(f"  [Improver:{source_path.name}] attempt {attempt}: _replace_function no match, patch[:100]={patch_code[:100]!r}", file=_sys.stderr)
                 continue
 
             source_path.write_text(patched, encoding="utf-8")
