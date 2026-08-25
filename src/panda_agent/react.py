@@ -159,24 +159,44 @@ def run_react(
             result.turns = turn
             return result
 
-        # No tool call, no DONE, no FAILED — check if response has
-        # substantive content (LLM may answer without DONE: prefix)
+        # No tool call, no DONE, no FAILED.
+        # Reasoning models (GLM52RJPT) output thinking in reasoning_content
+        # without TOOL_CALL:/DONE: markers. Push back and ask for format.
         stripped = response.strip()
-        if len(stripped) > 20 and not stripped.startswith("Continue"):
-            _emit("done", stripped[:200])
-            result.success = True
-            result.answer = stripped
-            result.tool_calls = tool_calls
-            result.turns = turn
-            if memory and config.memory.auto_write:
-                memory.write(f"Task: {task}\nResult: {stripped[:200]}", title=task[:50])
-            return result
+        has_format = any(m in stripped for m in ("TOOL_CALL:", "DONE:", "FAILED:"))
+        if not has_format and len(stripped) > 5:
+            # Reasoning model produced thought but no action marker.
+            # Ask it to commit to an action in the required format.
+            _emit("llm_thinking", f"Reasoning: {stripped[:80]}... → requesting format")
+            messages.append({"role": "assistant", "content": response})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Based on your reasoning above, commit to ONE action:\n"
+                    '- Call a tool: TOOL_CALL: {"name": "...", "args": {...}}\n'
+                    "- Finish: DONE: <summary>\n"
+                    "- Give up: FAILED: <reason>\n"
+                    "Output ONLY the action, nothing else."
+                )
+            })
+            continue
 
-        # Otherwise prompt to continue
-        _emit("llm_thinking", response[:100])
-        messages.append({"role": "assistant", "content": response})
-        messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
-        continue
+        # Response too short or starts with Continue — prompt to continue
+        if len(stripped) <= 20 or stripped.startswith("Continue"):
+            _emit("llm_thinking", response[:100])
+            messages.append({"role": "assistant", "content": response})
+            messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
+            continue
+
+        # Fallback: treat as done (non-reasoning model with substantive content)
+        _emit("done", stripped[:200])
+        result.success = True
+        result.answer = stripped
+        result.tool_calls = tool_calls
+        result.turns = turn
+        if memory and config.memory.auto_write:
+            memory.write(f"Task: {task}\nResult: {stripped[:200]}", title=task[:50])
+        return result
 
     # Max turns exceeded
     _emit("max_turns", f"Reached max turns ({max_turns})")
