@@ -149,11 +149,19 @@ an evaluation report.
 
 ## Target File: {target_file}
 
+## Instructions
+Output ONLY the function(s) you want to replace. Each function must be a \
+complete, valid Python function starting with `def function_name(`.
+Do NOT include module-level docstrings, imports, or constants unless \
+you are also replacing them.
+
 Output format:
 ```
 PATCH_START
 ```python
-<your patched code here>
+def function_name(args):
+    # your implementation
+    ...
 ```
 PATCH_END
 EXPLANATION: what you changed and why
@@ -175,33 +183,56 @@ _BRAIN_PATH = Path(__file__).parent / "brain.py"
 
 
 def _extract_relevant(source: str, eval_data: Evaluation, keywords: list[str]) -> str:
-    """Extract relevant functions from source based on keywords."""
+    """Extract relevant functions from source based on evaluation issues.
+
+    Matches function names and keywords found in the evaluation text.
+    Returns only the matched function bodies, not the whole file.
+    """
     search_text = " ".join(eval_data.issues + [eval_data.root_cause, eval_data.suggested_changes]).lower()
-    # Find all function defs
-    funcs = {}
-    for m in re.finditer(r"^def (\w+)\(", source, re.MULTILINE):
-        funcs[m.group(1)] = m.start()
-    # Match by keyword or function name
+    # Find all function defs with their positions
+    func_defs = list(re.finditer(r"^def (\w+)\(", source, re.MULTILINE))
+    if not func_defs:
+        return source[:5000]
+
     relevant = set()
-    for name in funcs:
-        if name in search_text:
+    for m in func_defs:
+        name = m.group(1)
+        # Match if function name appears in evaluation text
+        if name.lower() in search_text:
             relevant.add(name)
+
+    # Also match by keyword: check if keyword appears in evaluation text
+    # AND matches a function name or is part of a function's purpose
     for kw in keywords:
         if kw.lower() in search_text:
-            relevant.add(kw)
+            for m in func_defs:
+                name = m.group(1)
+                if kw.lower() in name.lower():
+                    relevant.add(name)
+
     if not relevant:
-        return source[:15000]
-    # Extract function bodies
+        # Fallback: return all function signatures + first 200 chars of each body
+        lines = []
+        for m in func_defs:
+            name = m.group(1)
+            end = m.end() + 200
+            lines.append(source[m.start():end])
+        return "\n...\n".join(lines) if lines else source[:3000]
+
+    # Extract complete function bodies for relevant functions
     results = []
-    for name in relevant:
-        if name not in funcs:
+    for m in func_defs:
+        name = m.group(1)
+        if name not in relevant:
             continue
-        start = funcs[name]
+        start = m.start()
+        # Find end of function (next def at same indent level or EOF)
         remaining = source[start:]
-        next_func = re.search(r"\ndef \w+\(", remaining[1:])
-        end = next_func.start() + 1 if next_func else len(remaining)
-        results.append(remaining[:end].strip())
-    return "\n\n".join(results) if results else source[:15000]
+        next_def = re.search(r"\ndef \w+\(", remaining[1:])
+        end = next_def.start() + 1 if next_def else len(remaining)
+        results.append(remaining[:end].rstrip())
+
+    return "\n\n".join(results) if results else source[:3000]
 
 
 def _extract_patch(response: str) -> str:
@@ -221,15 +252,50 @@ def _extract_patch(response: str) -> str:
 
 
 def _replace_function(source: str, new_code: str) -> str:
-    """Replace a function definition in source."""
-    m = re.match(r"def (\w+)\(", new_code)
-    if not m:
+    """Replace function definition(s) in source.
+
+    Handles three cases:
+    1. Single function: `def foo(...): ...` → replace that function
+    2. Multiple functions: `def foo(...): ...\n\ndef bar(...): ...` → replace each
+    3. Full file (starts with docstring/imports): replace entire source
+    """
+    # Case 3: LLM returned a full file (starts with docstring or imports)
+    if not new_code.lstrip().startswith("def "):
+        # Check if it looks like a complete module
+        if new_code.startswith('"""') or new_code.startswith("from ") or new_code.startswith("import "):
+            return new_code
+        # Try to extract the first def from the code
+        m = re.search(r"^def (\w+)\(", new_code, re.MULTILINE)
+        if not m:
+            return source
+        # Fall through to case 1 with the first function
+    else:
+        m = re.match(r"def (\w+)\(", new_code)
+
+    # Case 1 & 2: replace each function found in new_code
+    # Find all function definitions in new_code
+    new_funcs = list(re.finditer(r"^def (\w+)\(", new_code, re.MULTILINE))
+    if not new_funcs:
         return source
-    name = m.group(1)
-    pattern = re.compile(rf"^def {name}\(.*?(?=\ndef \w+\(|\Z)", re.DOTALL)
-    if not pattern.search(source):
-        return source
-    return pattern.sub(new_code.rstrip() + "\n\n", source, count=1)
+
+    result = source
+    for i, fm in enumerate(new_funcs):
+        name = fm.group(1)
+        # Find the end of this function in new_code (next def or end)
+        func_start = fm.start()
+        remaining = new_code[func_start:]
+        next_def = re.search(r"\ndef \w+\(", remaining[1:])
+        if next_def:
+            func_body = remaining[:next_def.start() + 1].rstrip()
+        else:
+            func_body = remaining.rstrip()
+
+        # Replace in source — MULTILINE so ^ matches at line starts, not just file start
+        pattern = re.compile(rf"^def {name}\(.*?(?=\ndef \w+\(|\Z)", re.DOTALL | re.MULTILINE)
+        if pattern.search(result):
+            result = pattern.sub(func_body + "\n\n", result, count=1)
+
+    return result if result != source else source
 
 
 def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tuple[bool, str]:
