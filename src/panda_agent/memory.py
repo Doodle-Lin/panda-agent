@@ -138,3 +138,28 @@ class MemoryClient:
         if self._mem is None:
             return {"error": "memory not available"}
         return self._mem.stats()
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """List all memory nodes with full content — for /memory tidy review."""
+        if self._mem is None:
+            return []
+        engine = self._mem._engine
+        nodes = []
+        for nid, attrs in engine.graph.nodes(data=True):
+            nodes.append({
+                "id": nid,
+                "content": attrs.get("content", ""),
+                "title": attrs.get("title", ""),
+                "source": attrs.get("source", ""),
+                "node_type": attrs.get("node_type", ""),
+            })
+        return nodes
+
+    def delete_by_id(self, nid: str) -> bool:
+        """Delete a memory node by id — for /memory tidy cleanup."""
+        if self._mem is None:
+            return False
+        result = self._mem._engine.delete_node(nid)
+        if result:
+            self._mem._engine.save()
+        return result

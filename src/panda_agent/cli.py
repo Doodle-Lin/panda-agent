@@ -16,12 +16,146 @@ from __future__ import annotations
 
 import argparse
 import sys
+import os
 
 from .config import load_config, save_config, config_path, default_config_yaml, Config
 from .tui import TUI
 from .tools import TOOLS, get_tool_descriptions
 from .react import run_react
 from .memory import MemoryClient
+
+
+# ---------------------------------------------------------------------------
+# Slash command parsing (/memory, /help, /stats, /clear)
+# ---------------------------------------------------------------------------
+
+def _is_slash_command(text: str) -> bool:
+    """Check if input starts with / (slash command)."""
+    return text.strip().startswith("/")
+
+
+def _parse_slash_command(text: str) -> tuple[str, str]:
+    """Parse '/cmd args' → ('cmd', 'args'). Returns (command, rest)."""
+    stripped = text.strip()[1:]  # remove leading /
+    parts = stripped.split(None, 1)
+    cmd = parts[0].lower() if parts else ""
+    rest = parts[1] if len(parts) > 1 else ""
+    # Normalize aliases
+    if cmd in ("mem",):
+        cmd = "memory"
+    return cmd, rest
+
+
+def _cmd_memory_tidy(tui: TUI, memory: MemoryClient, llm_callback) -> None:
+    """Review all memory nodes, use LLM to decide what to keep/delete.
+
+    Called when user types /memory in chat.
+    """
+    if memory is None or not memory.is_available():
+        tui.info("Memory not available")
+        return
+
+    nodes = memory.list_all()
+    if not nodes:
+        tui.info("Memory is empty — nothing to tidy")
+        return
+
+    tui.info(f"Reviewing {len(nodes)} memory nodes...")
+
+    # Build a review prompt for the LLM
+    import json
+    node_summary = []
+    for n in nodes:
+        content_preview = n["content"][:200]
+        node_summary.append({
+            "id": n["id"],
+            "title": n["title"],
+            "content": content_preview,
+            "source": n["source"],
+        })
+
+    review_prompt = (
+        "You are a memory curator. Review these memory nodes from a graph memory.\n"
+        "For each node, decide: KEEP (useful knowledge/preference/experience) or DELETE (noise/duplicate/trivial/outdated).\n"
+        "Return a JSON array: [{\"id\": \"...\", \"action\": \"keep\"|\"delete\", \"reason\": \"...\"}]\n"
+        "Be conservative — only delete clearly useless nodes.\n\n"
+        f"Nodes to review:\n{json.dumps(node_summary, ensure_ascii=False, indent=2)}"
+    )
+
+    # Call LLM for review
+    from .llm import call_llm_detailed
+    config = load_config()
+    messages = [
+        {"role": "system", "content": "You are a memory curator. Respond ONLY with JSON."},
+        {"role": "user", "content": review_prompt},
+    ]
+
+    try:
+        resp = call_llm_detailed(messages, config.model)
+        response_text = resp.content or resp.reasoning or ""
+        if not response_text:
+            tui.info("LLM returned no response — skipping tidy")
+            return
+
+        # Parse JSON array from response
+        import re
+        json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+        if not json_match:
+            tui.info("Could not parse LLM response — skipping tidy")
+            return
+
+        decisions = json.loads(json_match.group(0))
+        kept = 0
+        deleted = 0
+        for d in decisions:
+            nid = d.get("id", "")
+            action = d.get("action", "keep")
+            reason = d.get("reason", "")
+
+            if action == "delete" and nid:
+                # Verify node exists before deleting
+                if memory.delete_by_id(nid):
+                    deleted += 1
+                    tui.event("memory_tidy", f"  🗑 Deleted: {nid[:8]}... — {reason[:80]}")
+                else:
+                    tui.event("memory_tidy", f"  ⚠ Could not delete: {nid[:8]}...")
+            else:
+                kept += 1
+
+        tui.info(f"Done: {kept} kept, {deleted} deleted. Memory now has {len(nodes) - deleted} nodes.")
+
+    except Exception as e:
+        tui.info(f"Memory tidy failed: {e}")
+
+
+def _handle_slash_command(text: str, tui: TUI, memory: MemoryClient, config) -> bool:
+    """Handle slash commands in chat mode. Returns True if handled."""
+
+    cmd, rest = _parse_slash_command(text)
+
+    if cmd in ("memory", "mem"):
+        _cmd_memory_tidy(tui, memory, None)
+        return True
+
+    if cmd == "stats":
+        if memory and memory.is_available():
+            stats = memory.stats()
+            tui.info(f"Memory: {stats.get('node_count', 0)} nodes, {stats.get('edge_count', 0)} edges")
+        else:
+            tui.info("Memory not available")
+        return True
+
+    if cmd == "help":
+        tui.info("Commands: /memory (tidy memory), /stats (memory stats), /help, /clear (clear screen), exit")
+        return True
+
+    if cmd == "clear":
+        os.system("cls" if os.name == "nt" else "clear")
+        return True
+
+    # Unknown slash command
+    tui.info(f"Unknown command: /{cmd}. Type /help for available commands.")
+    return True
 
 
 def main():
@@ -173,6 +307,11 @@ def cmd_chat(args):
                 tui.info("Goodbye!")
                 break
             if not user_input.strip():
+                continue
+
+            # Handle slash commands (/memory, /stats, /help, /clear)
+            if _is_slash_command(user_input):
+                _handle_slash_command(user_input, tui, memory, config)
                 continue
 
             result = run_react(user_input, config, on_event=on_event, on_reasoning=on_reasoning, memory=memory)
