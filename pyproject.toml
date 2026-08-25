@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evo-agent"
+version = "0.1.0"
+description = "Generic 3-Agent Self-Evolution Framework"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
