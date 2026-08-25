@@ -34,7 +34,8 @@
 - [x] Salvage always runs (not just when tool_calls exist)
 - [x] Checkpoint: 127/127 passing
 
-### Phase 4: Context Compression (P1) — most complex
-- [ ] Write failing test: threshold → compress → continue
-- [ ] Implement context compression in react.py
-- [ ] Checkpoint: 117+ tests green
+### Phase 4: Context Compression (P1) — ✅ COMPLETED
+- [x] Write failing test: threshold → compress → continue (8 tests, RED)
+- [x] Implement _estimate_tokens + _compress_messages in react.py
+- [x] Integrate into ReAct loop: compress before each LLM call
+- [x] Checkpoint: 135/135 passing
