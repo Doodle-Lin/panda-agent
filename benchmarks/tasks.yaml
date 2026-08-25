@@ -1,0 +1,71 @@
+# Regression benchmark suite.
+#
+# This is the gate that makes "the agent improved" a checkable claim rather
+# than an assertion. Every task here must have a scorer whose result does not
+# depend on an LLM's opinion unless the task is genuinely open-ended.
+#
+# Guidance for adding tasks:
+#   - Prefer `file_state` for anything that modifies files: it scores the
+#     effect, not what the agent claims it did.
+#   - Prefer `exact_match` for questions with a determinate answer.
+#   - Use `llm_judge` only when neither works, and accept that its noise
+#     enters the accept/reject decision directly.
+#   - Weight by how much the capability matters, not by difficulty.
+
+- id: read_and_report
+  instruction: >
+    Read fixtures/sample_project/config.py and report the value assigned to
+    DEFAULT_PORT. State just the number.
+  scorer: exact_match
+  expected:
+    contains: "8080"
+  weight: 1.0
+
+- id: search_with_locations
+  instruction: >
+    Find every TODO comment under fixtures/sample_project/ and list them with
+    their file name and line number.
+  scorer: exact_match
+  expected:
+    contains:
+      - "config.py"
+      - "handlers.py"
+      - "7"       # config.py:7
+      - "11"      # handlers.py:11
+    not_contains:
+      - "no TODO"
+  weight: 1.5
+
+- id: count_and_compare
+  instruction: >
+    Which Python file under fixtures/sample_project/ has the most lines?
+    Report the file name and its line count.
+  scorer: exact_match
+  expected:
+    contains:
+      - "handlers.py"
+      - "54"
+  weight: 1.0
+
+- id: apply_edit
+  instruction: >
+    In fixtures/sample_project/config.py, change DEFAULT_PORT from 8080 to
+    9090. Change nothing else.
+  scorer: file_state
+  expected:
+    file: fixtures/sample_project/config.py
+    contains: "DEFAULT_PORT = 9090"
+    not_contains: "DEFAULT_PORT = 8080"
+  weight: 2.0
+
+- id: recover_from_missing_file
+  instruction: >
+    Read fixtures/sample_project/does_not_exist.py. If it is missing, say so
+    explicitly rather than inventing its contents.
+  scorer: exact_match
+  expected:
+    contains:
+      - "not"
+    not_contains:
+      - "DEFAULT_PORT"
+  weight: 1.5
