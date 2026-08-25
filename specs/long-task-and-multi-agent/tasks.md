@@ -21,10 +21,10 @@
 ## Phases
 
 ### Phase 1: Debug write_file (P1) — find root cause first
-- [ ] Run write_file directly, verify file exists on disk
-- [ ] Write failing test for write_file
-- [ ] Fix write_file
-- [ ] Checkpoint: write_file works, existing tests still pass
+- [x] Run write_file directly, verify file exists on disk → **write_file itself works**
+- [x] Write failing test for write_file → **RED: prompt has no rule requiring write_file for file creation**
+- [x] Fix: add rule 7 to system prompt → **GREEN: 117/117 passing**
+- [x] Checkpoint: write_file works, existing tests still pass
 
 ### Phase 2: Multi-agent orchestration (P3+P4)
 - [ ] Write failing test for task decomposition (complex vs simple)

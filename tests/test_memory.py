@@ -156,10 +156,14 @@ class TestWriteAndRetrieve:
 
 class TestRetrieveEmpty:
     def test_retrieve_empty(self, mem):
-        """Retrieve with an unrelated query returns empty list."""
+        """Retrieve with an completely unrelated query returns empty list.
+
+        Note: FakeEmbedder uses 64-dim bag-of-words hashing. With small dims,
+        hash collisions can cause false similarity. Use a query with tokens
+        that are very unlikely to hash-collide with the written content.
+        """
         mem.write("Python is a programming language for data science")
-        results = mem.retrieve("quantum entanglement xyzzy unrelated",
-                                top_k=5)
+        results = mem.retrieve("zzz qq www xx", top_k=5)
         assert isinstance(results, list)
         assert len(results) == 0
 
