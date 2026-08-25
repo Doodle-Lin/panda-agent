@@ -33,6 +33,7 @@ You solve tasks by calling tools in a ReAct loop.
    FAILED: <reason>
 6. Be concise. Do not repeat yourself.
 7. If a tool fails, try a different approach instead of repeating.
+8. Always respond in the same language as the user's input.
 
 ## Important
 
