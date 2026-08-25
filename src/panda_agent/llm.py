@@ -42,7 +42,13 @@ def call_llm(
         "Content-Type": "application/json",
     }
     effective_model = model or config.default
-    effective_max = max(max_tokens or config.max_tokens, 16384)
+    # Reasoning models (e.g. GLM52RJPT) need >=16384 max_tokens or they hang.
+    # Non-reasoning models (e.g. GLM-5.2) work fine with config default and
+    # forcing 16384 makes them generate very long responses, causing slowness.
+    reasoning_models = {"GLM52RJPT", "glm-4-reasoning", "o1", "o3", "deepseek-r1"}
+    is_reasoning = effective_model in reasoning_models or "reasoning" in effective_model.lower()
+    base_max = max_tokens or config.max_tokens
+    effective_max = max(base_max, 16384) if is_reasoning else base_max
     payload = {
         "model": effective_model,
         "messages": messages,
