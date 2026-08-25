@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from .config import Config, load_config
 from .llm import call_llm
+from .parsing import parse_evaluation
 from .react import run_react, ReActResult
 from .tools import TOOLS, execute_tool, get_tool_descriptions
 from .brain import build_system_prompt
@@ -66,6 +67,13 @@ Respond in JSON:
 {{"score": 85, "issues": ["issue1", "issue2"], "root_cause": "...", "suggested_changes": "..."}}
 """
 
+_EVAL_RETRY_SUFFIX = """\
+
+IMPORTANT: your previous response could not be parsed ({error}).
+Respond with ONLY a single JSON object, no prose before or after it.
+The "score" field must be a number between 0 and 100.
+"""
+
 
 class Evaluator:
     """Evaluator: uses LLM to score the execution result."""
@@ -73,7 +81,14 @@ class Evaluator:
     def __init__(self, config: Config):
         self.config = config
 
-    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation:
+    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation | None:
+        """Score an execution result.
+
+        Returns ``None`` when the model's output could not be parsed after a
+        retry. A caller that receives ``None`` has *no evaluation signal* for
+        this round and must skip improving rather than acting on a guess --
+        see :mod:`panda_agent.parsing` for why a default score is harmful.
+        """
         prompt = _EVAL_PROMPT.format(
             task=task.instruction,
             success=result.success,
@@ -84,22 +99,22 @@ class Evaluator:
             [{"role": "user", "content": prompt}],
             self.config.model,
         )
-        try:
-            # Extract JSON from response
-            m = re.search(r'\{.*\}', response, re.DOTALL)
-            if m:
-                data = json.loads(m.group(0).replace("'", '"'))
-            else:
-                data = {"score": 50, "issues": ["Could not parse evaluation"]}
-        except json.JSONDecodeError:
-            data = {"score": 50, "issues": ["Could not parse evaluation"]}
+        parsed = parse_evaluation(response)
+        if parsed.ok:
+            return parsed.evaluation
 
-        return Evaluation(
-            score=float(data.get("score", 50)),
-            issues=data.get("issues", []),
-            root_cause=data.get("root_cause", ""),
-            suggested_changes=data.get("suggested_changes", ""),
+        # One bounded retry that names the specific failure.
+        retry_prompt = prompt + _EVAL_RETRY_SUFFIX.format(error=parsed.error)
+        response = call_llm(
+            [{"role": "user", "content": retry_prompt}],
+            self.config.model,
         )
+        parsed = parse_evaluation(response)
+        if parsed.ok:
+            return parsed.evaluation
+
+        self.last_error = parsed.error
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +380,9 @@ def run_evolution(
     result = EvolutionResult()
     best_score = 0.0
     total_patches = 0
+    best_round: int | None = None
+    snapshots: dict[int, dict[Path, str]] = {}
+    evolvable = [p for p in (_TOOLS_PATH, _BRAIN_PATH) if p.exists()]
 
     def _emit(et, msg, rnd, data=None):
         if on_event:
@@ -372,6 +390,12 @@ def run_evolution(
 
     for round_num in range(1, max_rounds + 1):
         round_result = RoundResult(round_num=round_num)
+
+        # Snapshot the evolvable sources *before* this round's patch, so the
+        # best-performing code state can be restored at the end.
+        snapshots[round_num] = {
+            p: p.read_text(encoding="utf-8") for p in evolvable
+        }
 
         # Execute
         _emit("executor_start", "Running task...", round_num)
@@ -382,11 +406,20 @@ def run_evolution(
         # Evaluate
         _emit("evaluator_start", "Evaluating...", round_num)
         evaluation = evaluator.evaluate(task, exec_result)
+        if evaluation is None:
+            # No usable signal this round. Improving on a fabricated score
+            # would optimise against noise, so skip straight to the next round.
+            reason = getattr(evaluator, "last_error", "unparseable evaluation")
+            _emit("evaluator_error", f"No evaluation signal: {reason}", round_num)
+            result.rounds.append(round_result)
+            continue
+
         round_result.evaluation = evaluation
         _emit("evaluator_done", f"Score: {evaluation.score:.0f}/100", round_num)
 
         if evaluation.score > best_score:
             best_score = evaluation.score
+            best_round = round_num
 
         if evaluation.score >= target_score:
             _emit("target_reached", f"Target {target_score} reached", round_num)
@@ -410,6 +443,22 @@ def run_evolution(
             _emit("improver_skip", "Last round", round_num)
 
         result.rounds.append(round_result)
+
+    # The scored code state is the one snapshotted at the *start* of the best
+    # round. Without this restore, run_evolution reports best_score while
+    # leaving whatever the final patch produced on disk -- so the number it
+    # returns describes code the caller never receives.
+    if best_round is not None and snapshots.get(best_round):
+        current = {p: p.read_text(encoding="utf-8") for p in evolvable}
+        if current != snapshots[best_round]:
+            for path, content in snapshots[best_round].items():
+                path.write_text(content, encoding="utf-8")
+            _emit(
+                "restored_best",
+                f"Restored code from round {best_round} (score {best_score:.0f})",
+                max_rounds,
+            )
+            result.restored_from_round = best_round
 
     result.final_score = best_score
     result.total_patches = total_patches
