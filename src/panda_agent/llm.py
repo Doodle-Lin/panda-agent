@@ -15,7 +15,24 @@ import requests
 from .config import ModelConfig
 
 
-def call_llm(
+@dataclass
+class LLMResponse:
+    """Detailed LLM response — reasoning and content separated."""
+    content: str = ""        # The model's final answer / action
+    reasoning: str = ""      # The model's thinking process (reasoning models only)
+    error: str = ""           # Non-empty if the API call failed
+
+    @property
+    def is_error(self) -> bool:
+        return bool(self.error)
+
+    @property
+    def text(self) -> str:
+        """Fallback: content if available, else reasoning."""
+        return self.content if self.content.strip() else self.reasoning
+
+
+def call_llm_detailed(
     messages: list[dict[str, str]],
     config: ModelConfig,
     *,
@@ -23,28 +40,18 @@ def call_llm(
     max_tokens: int | None = None,
     temperature: float = 0.2,
     timeout: int = 180,
-) -> str:
-    """Call LLM via streaming API and return full text.
+) -> LLMResponse:
+    """Call LLM and return detailed response with reasoning and content separated.
 
-    Args:
-        messages: OpenAI-format message list.
-        config: Model configuration.
-        model: Override model name.
-        max_tokens: Override max_tokens (min 16384 for reasoning models).
-        temperature: Sampling temperature.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        Full response text (content, or reasoning_content fallback).
+    For reasoning models (GLM52RJPT), reasoning_content contains the thinking
+    process and content contains the final answer. For non-reasoning models,
+    content contains the full response and reasoning is empty.
     """
     headers = {
         "Authorization": f"Bearer {config.api_key}",
         "Content-Type": "application/json",
     }
     effective_model = model or config.default
-    # Reasoning models (e.g. GLM52RJPT) need >=16384 max_tokens or they hang.
-    # Non-reasoning models (e.g. GLM-5.2) work fine with config default and
-    # forcing 16384 makes them generate very long responses, causing slowness.
     reasoning_models = {"GLM52RJPT", "glm-4-reasoning", "o1", "o3", "deepseek-r1"}
     is_reasoning = effective_model in reasoning_models or "reasoning" in effective_model.lower()
     base_max = max_tokens or config.max_tokens
@@ -66,9 +73,6 @@ def call_llm(
             stream=True,
         )
         resp.raise_for_status()
-
-        # Force UTF-8: streaming responses often lack charset in Content-Type,
-        # and requests defaults to ISO-8859-1 per HTTP spec, garbling CJK text.
         resp.encoding = "utf-8"
 
         content = ""
@@ -87,17 +91,39 @@ def call_llm(
             content += delta.get("content") or ""
             reasoning += delta.get("reasoning_content") or ""
 
-        # Reasoning models (GLM52RJPT) may leak <think> tags into output;
-        # strip them so ReAct parsers don't choke.
         import re as _re
         reasoning = _re.sub(r"</?think>", "", reasoning).strip()
         content = _re.sub(r"</?think>", "", content).strip()
 
-        return content if content.strip() else reasoning
+        return LLMResponse(content=content, reasoning=reasoning)
     except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as e:
-        return f"ERROR: LLM call failed: {e}"
+        return LLMResponse(error=f"LLM call failed: {e}")
     except Exception as e:
-        return f"ERROR: unexpected: {e}"
+        return LLMResponse(error=f"unexpected: {e}")
+
+
+def call_llm(
+    messages: list[dict[str, str]],
+    config: ModelConfig,
+    *,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float = 0.2,
+    timeout: int = 180,
+) -> str:
+    """Call LLM via streaming API and return full text.
+
+    Backward-compatible wrapper around call_llm_detailed.
+    Returns content if available, else reasoning, else error string.
+    """
+    resp = call_llm_detailed(
+        messages, config,
+        model=model, max_tokens=max_tokens,
+        temperature=temperature, timeout=timeout,
+    )
+    if resp.is_error:
+        return f"ERROR: {resp.error}"
+    return resp.text
 
 
 def call_llm_simple(

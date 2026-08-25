@@ -89,9 +89,15 @@ def cmd_chat(args):
 
     memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
 
+    def on_event(et, msg):
+        tui.event(et, msg)
+
+    def on_reasoning(label, text):
+        tui.reasoning(label, text)
+
     if args.query:
         # One-shot mode
-        result = run_react(args.query, config, on_event=lambda et, m: tui.event(et, m), memory=memory)
+        result = run_react(args.query, config, on_event=on_event, on_reasoning=on_reasoning, memory=memory)
         if result.success:
             tui.answer(result.answer)
         else:
@@ -108,7 +114,7 @@ def cmd_chat(args):
             if not user_input.strip():
                 continue
 
-            result = run_react(user_input, config, on_event=lambda et, m: tui.event(et, m), memory=memory)
+            result = run_react(user_input, config, on_event=on_event, on_reasoning=on_reasoning, memory=memory)
             if result.success:
                 tui.answer(result.answer)
             else:
@@ -181,6 +187,7 @@ def cmd_evolve(args):
     result = run_evolution(
         executor=None,  # Will use default
         evaluator=None,
+        learner=None,
         improver=None,
         task=Task(input_path="", instruction=args.task),
         target_score=args.target,
