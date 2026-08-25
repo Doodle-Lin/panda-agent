@@ -60,6 +60,40 @@ class TUI:
             )
         elif event_type == "max_turns":
             self.console.print(f"  [yellow]{message}[/]")
+        # === Evolve events ===
+        elif event_type == "executor_start":
+            self.console.print(f"\n[bold cyan]{message}[/]")
+        elif event_type == "executor_tools":
+            self.console.print(f"  [dim]🔧 {message}[/]")
+        elif event_type == "executor_done":
+            self.console.print(f"  [green]{message}[/]")
+        elif event_type == "evaluator_start":
+            self.console.print(f"  [dim]{message}[/]")
+        elif event_type == "evaluator_done":
+            self.console.print(f"  [bold yellow]{message}[/]")
+        elif event_type == "score_trend":
+            self.console.print(f"  [dim]{message}[/]")
+        elif event_type == "eval_issue":
+            self.console.print(f"  [yellow]{message}[/]")
+        elif event_type == "target_reached":
+            self.console.print(f"  [bold green]{message}[/]")
+        elif event_type == "stale_stop":
+            self.console.print(f"  [yellow]{message}[/]")
+        elif event_type == "improver_start":
+            self.console.print(f"  [dim]{message}[/]")
+        elif event_type == "improver_done":
+            if "✓" in message:
+                self.console.print(f"  [green]{message}[/]")
+            else:
+                self.console.print(f"  [red]{message}[/]")
+        elif event_type == "improver_detail":
+            self.console.print(f"  [dim italic]{message}[/]")
+        elif event_type == "improver_error":
+            self.console.print(f"  [red]{message}[/]")
+        elif event_type == "round_end":
+            self.console.print(f"  [dim]{message}[/]")
+        elif event_type == "complete":
+            self.console.print(f"\n[bold green]{message}[/]")
         else:
             self.console.print(f"  [dim]{event_type}: {message}[/]")
 

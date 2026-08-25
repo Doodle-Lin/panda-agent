@@ -46,8 +46,8 @@ def main():
     # evolve
     ev = sub.add_parser("evolve", help="Run self-evolution loop")
     ev.add_argument("-t", "--task", type=str, required=True, help="Task to evolve on")
-    ev.add_argument("--target", type=float, default=90.0, help="Target score")
-    ev.add_argument("--rounds", type=int, default=3, help="Max rounds")
+    ev.add_argument("--target", type=float, default=90.0, help="Target score (default: 90)")
+    ev.add_argument("--rounds", type=int, default=20, help="Max rounds (default: 20, stops early if target reached)")
 
     # memory
     mem = sub.add_parser("memory", help="Graph memory operations")

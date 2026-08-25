@@ -562,11 +562,17 @@ def run_evolution(
     task: Task,
     *,
     target_score: float = 90.0,
-    max_rounds: int = 3,
+    max_rounds: int = 20,
     on_event: Callable[[Event], None] | None = None,
     config: Config | None = None,
 ) -> EvolutionResult:
-    """Run the self-evolution loop."""
+    """Run the self-evolution loop until target_score or max_rounds.
+
+    The loop continues until either:
+    - Score reaches target_score (success)
+    - max_rounds reached (stop — but user can re-run)
+    - 3 consecutive rounds with no score improvement (diminishing returns)
+    """
     config = config or load_config()
     executor = executor or Executor(config)
     evaluator = evaluator or Evaluator(config)
@@ -575,6 +581,7 @@ def run_evolution(
     result = EvolutionResult()
     best_score = 0.0
     total_patches = 0
+    stale_rounds = 0  # Track rounds with no improvement
 
     def _emit(et, msg, rnd, data=None):
         if on_event:
@@ -583,48 +590,88 @@ def run_evolution(
     for round_num in range(1, max_rounds + 1):
         round_result = RoundResult(round_num=round_num)
 
-        # Execute
-        _emit("executor_start", "Running task...", round_num)
+        # === Execute ===
+        _emit("executor_start", f"Round {round_num}/{max_rounds}: executing task...", round_num)
         exec_result = executor.execute(task)
         round_result.execution = exec_result
-        _emit("executor_done", f"Success: {exec_result.success}", round_num)
+        
+        # Show what tools were called
+        if exec_result.tool_calls:
+            tools_summary = ", ".join(
+                tc.get("name", "?") for tc in exec_result.tool_calls
+            )
+            _emit("executor_tools", f"  Tools used: {tools_summary}", round_num)
+        
+        _emit("executor_done", f"  Success: {exec_result.success}", round_num)
 
-        # Evaluate
-        _emit("evaluator_start", "Evaluating...", round_num)
+        # === Evaluate ===
+        _emit("evaluator_start", f"  Evaluating...", round_num)
         evaluation = evaluator.evaluate(task, exec_result)
         round_result.evaluation = evaluation
-        _emit("evaluator_done", f"Score: {evaluation.score:.0f}/100", round_num)
+        
+        # Show evaluation details
+        _emit("evaluator_done", f"  Score: {evaluation.score:.0f}/100", round_num, 
+              data={"score": evaluation.score, "issues": evaluation.issues})
+        
+        # Show score trend
+        if best_score > 0:
+            trend = "↑" if evaluation.score > best_score else ("↓" if evaluation.score < best_score else "→")
+            _emit("score_trend", f"  Trend: {best_score:.0f} {trend} {evaluation.score:.0f}", round_num)
 
         if evaluation.score > best_score:
             best_score = evaluation.score
+            stale_rounds = 0
+        else:
+            stale_rounds += 1
+
+        # Show issues
+        if evaluation.issues:
+            for issue in evaluation.issues[:3]:
+                _emit("eval_issue", f"    ⚠ {issue}", round_num)
 
         if evaluation.score >= target_score:
-            _emit("target_reached", f"Target {target_score} reached", round_num)
+            _emit("target_reached", f"  ✓ Target {target_score:.0f} reached!", round_num)
             result.target_reached = True
             result.rounds.append(round_result)
             break
 
-        # Improve
-        if round_num < max_rounds:
-            _emit("improver_start", "Generating patch...", round_num)
-            try:
-                improvement = improver.improve(evaluation)
-                round_result.improvement = improvement
-                if improvement.patched:
-                    total_patches += 1
-                _emit("improver_done", f"Patched: {improvement.patched}, Attempts: {improvement.attempts}", round_num)
-            except Exception as e:
-                round_result.improvement = ImprovementResult(explanation=f"Error: {e}")
-                _emit("improver_error", str(e), round_num)
-        else:
-            _emit("improver_skip", "Last round", round_num)
+        # Stop if no improvement for 3 consecutive rounds
+        if stale_rounds >= 3:
+            _emit("stale_stop", f"  Stopping: no improvement for {stale_rounds} rounds", round_num)
+            result.rounds.append(round_result)
+            break
+
+        # === Improve ===
+        _emit("improver_start", f"  Generating patch...", round_num)
+        try:
+            improvement = improver.improve(evaluation)
+            round_result.improvement = improvement
+            if improvement.patched:
+                total_patches += 1
+                _emit("improver_done", f"  ✓ Patched (attempts: {improvement.attempts})", round_num,
+                      data={"patched": True, "explanation": improvement.explanation})
+                # Show what was changed
+                if improvement.explanation:
+                    _emit("improver_detail", f"    Change: {improvement.explanation[:200]}", round_num)
+            else:
+                _emit("improver_done", f"  ✗ No patch applied (attempts: {improvement.attempts})", round_num,
+                      data={"patched": False, "explanation": improvement.explanation})
+                if improvement.explanation:
+                    _emit("improver_detail", f"    Reason: {improvement.explanation[:200]}", round_num)
+        except Exception as e:
+            round_result.improvement = ImprovementResult(explanation=f"Error: {e}")
+            _emit("improver_error", f"  Error: {e}", round_num)
 
         result.rounds.append(round_result)
+        
+        # Round separator
+        _emit("round_end", f"  {'─' * 40}", round_num)
 
     result.final_score = best_score
     result.total_patches = total_patches
     result.target_reached = result.target_reached or best_score >= target_score
 
-    _emit("complete", f"Done. Score: {best_score:.0f}, Patches: {total_patches}", max_rounds)
+    # Final summary
+    _emit("complete", f"Done. Score: {best_score:.0f}/{target_score:.0f}, Patches: {total_patches}, Rounds: {len(result.rounds)}", max_rounds)
 
     return result
