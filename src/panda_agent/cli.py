@@ -196,7 +196,29 @@ def _handle_slash_command(text: str, tui: TUI, memory: MemoryClient, config) -> 
         return True
 
     if cmd == "help":
-        tui.info("Commands: /memory (整理记忆:提炼/合并/删除), /stats (记忆统计), /help, /clear, exit")
+        tui.info("Commands: /memory (整理记忆:提炼/合并/删除), /stats (记忆统计), /history (查看历史), /help, /clear, exit")
+        return True
+
+    if cmd == "history":
+        panda_home = os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))
+        sessions_dir = os.path.join(panda_home, "sessions")
+        if not os.path.exists(sessions_dir):
+            tui.info("No session history yet")
+            return True
+        import json as _json
+        files = sorted(os.listdir(sessions_dir), reverse=True)[:5]
+        for sf in files:
+            path = os.path.join(sessions_dir, sf)
+            try:
+                lines = open(path, encoding="utf-8").readlines()
+                tui.info(f"  {sf} ({len(lines)} messages)")
+                for line in lines[-3:]:  # last 3 messages
+                    entry = _json.loads(line)
+                    user = entry.get("user", "")[:60]
+                    success = "OK" if entry.get("success") else "FAIL"
+                    tui.info(f"    [{success}] {user}")
+            except Exception:
+                pass
         return True
 
     if cmd == "clear":
@@ -350,6 +372,32 @@ def cmd_chat(args):
         return
 
     # Interactive mode
+    import os, json
+    from datetime import datetime
+
+    # Session history — persisted to ~/.panda/sessions/
+    panda_home = os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))
+    sessions_dir = os.path.join(panda_home, "sessions")
+    os.makedirs(sessions_dir, exist_ok=True)
+    session_file = os.path.join(sessions_dir, f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
+    session_entries = []
+
+    def _save_session(user_msg: str, answer: str, success: bool):
+        entry = {
+            "time": datetime.now().isoformat(),
+            "user": user_msg,
+            "answer": answer[:500],
+            "success": success,
+            "turns": getattr(result, "turns", 0),
+            "tool_calls": len(getattr(result, "tool_calls", [])),
+        }
+        session_entries.append(entry)
+        try:
+            with open(session_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     while True:
         try:
             user_input = tui.user_input()
@@ -369,6 +417,9 @@ def cmd_chat(args):
                 tui.answer(result.answer)
             else:
                 tui.error(result.error or "Task failed")
+
+            # Save to session history
+            _save_session(user_input, result.answer or result.error or "", result.success)
 
             # Learn from every task — this is the self-evolution in daily use
             _learn_after_task(user_input, result)
