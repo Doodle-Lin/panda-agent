@@ -117,7 +117,27 @@ def run_react(
             result.turns = turn
             return result
 
-        # Check for DONE
+        # TOOL_CALL takes priority over DONE — if the LLM wants to call
+        # a tool, execute it first; only treat as done if no tool call.
+        tool_call = _parse_tool_call(response)
+        if tool_call:
+            tool_name = tool_call.get("name", "")
+            tool_args = tool_call.get("args", {})
+
+            _emit("tool_call", f"{tool_name}({tool_args})")
+
+            # Execute tool
+            tool_result = execute_tool(tool_name, tool_args)
+            _emit("tool_result", tool_result[:200])
+
+            tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+
+            # Append to conversation
+            messages.append({"role": "assistant", "content": response})
+            messages.append({"role": "user", "content": f"Tool result:\n{tool_result}"})
+            continue
+
+        # Check for DONE (only if no tool call)
         done = _parse_done(response)
         if done:
             _emit("done", done)
@@ -139,43 +159,24 @@ def run_react(
             result.turns = turn
             return result
 
-        # Parse TOOL_CALL
-        tool_call = _parse_tool_call(response)
-        if not tool_call:
-            # No tool call — check if response has substantive content
-            # (LLM may answer without DONE: prefix)
-            stripped = response.strip()
-            if len(stripped) > 20 and not stripped.startswith("Continue"):
-                # Treat as answer if it looks like a real response
-                _emit("done", stripped[:200])
-                result.success = True
-                result.answer = stripped
-                result.tool_calls = tool_calls
-                result.turns = turn
-                if memory and config.memory.auto_write:
-                    memory.write(f"Task: {task}\nResult: {stripped[:200]}", title=task[:50])
-                return result
+        # No tool call, no DONE, no FAILED — check if response has
+        # substantive content (LLM may answer without DONE: prefix)
+        stripped = response.strip()
+        if len(stripped) > 20 and not stripped.startswith("Continue"):
+            _emit("done", stripped[:200])
+            result.success = True
+            result.answer = stripped
+            result.tool_calls = tool_calls
+            result.turns = turn
+            if memory and config.memory.auto_write:
+                memory.write(f"Task: {task}\nResult: {stripped[:200]}", title=task[:50])
+            return result
 
-            # Otherwise prompt to continue
-            _emit("llm_thinking", response[:100])
-            messages.append({"role": "assistant", "content": response})
-            messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
-            continue
-
-        tool_name = tool_call.get("name", "")
-        tool_args = tool_call.get("args", {})
-
-        _emit("tool_call", f"{tool_name}({tool_args})")
-
-        # Execute tool
-        tool_result = execute_tool(tool_name, tool_args)
-        _emit("tool_result", tool_result[:200])
-
-        tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
-
-        # Append to conversation
+        # Otherwise prompt to continue
+        _emit("llm_thinking", response[:100])
         messages.append({"role": "assistant", "content": response})
-        messages.append({"role": "user", "content": f"Tool result:\n{tool_result}"})
+        messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
+        continue
 
     # Max turns exceeded
     _emit("max_turns", f"Reached max turns ({max_turns})")

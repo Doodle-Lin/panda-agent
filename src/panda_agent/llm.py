@@ -87,6 +87,12 @@ def call_llm(
             content += delta.get("content") or ""
             reasoning += delta.get("reasoning_content") or ""
 
+        # Reasoning models (GLM52RJPT) may leak <think> tags into output;
+        # strip them so ReAct parsers don't choke.
+        import re as _re
+        reasoning = _re.sub(r"</?think>", "", reasoning).strip()
+        content = _re.sub(r"</?think>", "", content).strip()
+
         return content if content.strip() else reasoning
     except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as e:
         return f"ERROR: LLM call failed: {e}"

@@ -53,9 +53,7 @@ class TUI:
         elif event_type == "tool_result":
             self.console.print(f"  [blue]{message}[/]")
         elif event_type == "done":
-            self.console.print(
-                Panel(message, title="[green]Done[/]", border_style="green")
-            )
+            self.console.print(f"  [green]✓ {message}[/]")
         elif event_type == "failed":
             self.console.print(
                 Panel(message, title="[red]Failed[/]", border_style="red")
