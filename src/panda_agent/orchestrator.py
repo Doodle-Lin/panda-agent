@@ -225,7 +225,7 @@ class Learner:
         )
         data = self._parse_learn_json(response)
 
-        # Write lessons to memory
+        # Write lessons to memory (embedded graph engine, no HTTP needed)
         memory_written = False
         if self.memory and data.get("lessons"):
             for lesson in data["lessons"][:5]:
@@ -233,6 +233,8 @@ class Learner:
                     self.memory.write(
                         f"Lesson for '{task.instruction[:50]}': {lesson}",
                         title=f"lesson:{task.instruction[:30]}",
+                        node_type="reference",
+                        source="panda_learner",
                     )
                     memory_written = True
                 except Exception:

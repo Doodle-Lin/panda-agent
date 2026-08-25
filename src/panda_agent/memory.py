@@ -1,106 +1,140 @@
-"""Graph memory client — retrieves and writes knowledge via API.
+"""Embedded graph memory — direct GraphEngine, no HTTP server needed.
 
-Connects to the graph-memory FastAPI server (default: http://127.0.0.1:9121).
-Uses embedding + Personalized PageRank for associative recall.
+Wraps graph_memory.engine.GraphEngine for in-process use by PandaAgent.
+Persists to SQLite + .npz under ~/.panda/memory/.
 """
 
 from __future__ import annotations
 
-import json
+import sys
+import os
+from pathlib import Path
 from typing import Any
 
-import requests
+# Add graph_memory to import path
+_GRAPH_MEMORY_DIR = Path(r"${PANDA_HOME}/graph_memory")
+if str(_GRAPH_MEMORY_DIR) not in sys.path:
+    sys.path.insert(0, str(_GRAPH_MEMORY_DIR))
 
 
-class MemoryClient:
-    """Client for the graph-memory API.
+class EmbeddedMemory:
+    """Embedded graph memory engine — no external service required.
 
-    If the server is not running, all operations gracefully degrade
-    to no-ops (return empty results) instead of crashing.
+    Uses GraphEngine directly (NetworkX + sentence-transformers + PageRank).
+    Data persists to ~/.panda/memory/ as SQLite + .npz files.
     """
 
-    def __init__(self, url: str = "http://127.0.0.1:9121"):
-        self.url = url.rstrip("/")
-        self._timeout = 5
+    _instance: "EmbeddedMemory | None" = None
+
+    def __init__(self, data_dir: Path | None = None):
+        if data_dir is None:
+            data_dir = Path(os.path.expanduser("~/.panda/memory"))
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        # Monkey-patch graph_memory config to use our data dir
+        # before importing GraphEngine
+        import graph_memory.config as gm_config
+        gm_config.DATA_DIR = data_dir
+        gm_config.GRAPH_DB = data_dir / "graph.db"
+        gm_config.GRAPH_FILE = data_dir / "graph.json"
+        gm_config.EMBEDDINGS_FILE = data_dir / "embeddings.npz"
+
+        from graph_memory.engine import GraphEngine
+        self._engine = GraphEngine()
+
+    @classmethod
+    def get(cls) -> "EmbeddedMemory | None":
+        """Get or create singleton instance. Returns None if init fails."""
+        if cls._instance is None:
+            try:
+                cls._instance = cls()
+            except Exception as e:
+                print(f"[Memory] Init failed: {e}", file=sys.stderr)
+                return None
+        return cls._instance
+
+    def write(self, content: str, title: str = "",
+              node_type: str = "knowledge", source: str = "panda") -> dict:
+        """Write a knowledge node + auto-link to related nodes."""
+        try:
+            node = self._engine.add_node(
+                content=content, title=title,
+                node_type=node_type, source=source,
+            )
+            if node:
+                self._engine.auto_link(node["id"], max_links=5)
+                self._engine.save()
+            return node or {}
+        except Exception as e:
+            print(f"[Memory] Write failed: {e}", file=sys.stderr)
+            return {}
 
     def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """Retrieve related knowledge from the graph.
-
-        Uses embedding similarity + PageRank graph diffusion.
-        Returns list of {content, score, title, node_type, ...}.
-        """
+        """Retrieve related knowledge via embedding + PageRank."""
         try:
-            resp = requests.post(
-                f"{self.url}/api/retrieve",
-                json={"query": query, "top_k": top_k},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("results", [])
-        except Exception:
-            return []
-
-    def write(self, content: str, title: str = "", node_type: str = "knowledge") -> dict:
-        """Write a knowledge node to the graph with auto-linking."""
-        try:
-            resp = requests.post(
-                f"{self.url}/api/write",
-                json={
-                    "content": content,
-                    "title": title,
-                    "node_type": node_type,
-                    "auto_link": True,
-                },
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            return resp.json()
+            return self._engine.retrieve(query, top_k=top_k)
         except Exception as e:
-            return {"error": str(e)}
-
-    def search(self, query: str) -> list[dict[str, Any]]:
-        """Quick GET search (alias for retrieve)."""
-        try:
-            resp = requests.get(
-                f"{self.url}/api/search",
-                params={"q": query},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("results", [])
-        except Exception:
+            print(f"[Memory] Retrieve failed: {e}", file=sys.stderr)
             return []
-
-    def stats(self) -> dict[str, Any]:
-        """Get graph statistics."""
-        try:
-            resp = requests.get(f"{self.url}/api/stats", timeout=self._timeout)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception:
-            return {"error": "graph memory not running"}
-
-    def is_available(self) -> bool:
-        """Check if the graph memory server is running."""
-        try:
-            resp = requests.get(f"{self.url}/api/stats", timeout=2)
-            return resp.status_code == 200
-        except Exception:
-            return False
 
     def retrieve_context(self, query: str, top_k: int = 3) -> str:
         """Retrieve and format as context string for LLM injection.
 
-        Returns empty string if no memory or server unavailable.
+        This is what gets appended to the system prompt so the agent
+        can benefit from past experience without re-learning.
         """
         results = self.retrieve(query, top_k=top_k)
         if not results:
             return ""
-        lines = ["## Relevant Memory"]
+
+        lines = ["## Past Experience (from memory)"]
         for r in results:
             score = r.get("score", 0)
             content = r.get("content", "")[:300]
-            lines.append(f"- [{score:.2f}] {content}")
+            node_type = r.get("node_type", "")
+            lines.append(f"- [{score:.2f}] ({node_type}) {content}")
         return "\n".join(lines)
+
+    def stats(self) -> dict[str, Any]:
+        try:
+            return self._engine.stats()
+        except Exception:
+            return {"error": "stats failed"}
+
+    def is_available(self) -> bool:
+        return self._engine is not None
+
+
+# Backward-compatible API matching old MemoryClient interface
+class MemoryClient:
+    """Drop-in replacement for the old HTTP-based MemoryClient.
+
+    Uses EmbeddedMemory internally — no external service needed.
+    """
+
+    def __init__(self, url: str = "", **kwargs):
+        self._mem = EmbeddedMemory.get()
+
+    def retrieve(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+        if self._mem is None:
+            return []
+        return self._mem.retrieve(query, top_k=top_k)
+
+    def write(self, content: str, title: str = "",
+              node_type: str = "knowledge", source: str = "panda") -> dict:
+        if self._mem is None:
+            return {"error": "memory not available"}
+        return self._mem.write(content, title=title, node_type=node_type, source=source)
+
+    def retrieve_context(self, query: str, top_k: int = 3) -> str:
+        if self._mem is None:
+            return ""
+        return self._mem.retrieve_context(query, top_k=top_k)
+
+    def is_available(self) -> bool:
+        return self._mem is not None and self._mem.is_available()
+
+    def stats(self) -> dict[str, Any]:
+        if self._mem is None:
+            return {"error": "memory not available"}
+        return self._mem.stats()
