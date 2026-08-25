@@ -126,17 +126,78 @@ def _check_doom_loop(tool_calls: list[dict]) -> bool:
 # ---------------------------------------------------------------------------
 
 def _parse_tool_call(text: str) -> dict | None:
-    """Extract TOOL_CALL JSON from LLM response."""
+    """Extract TOOL_CALL JSON from LLM response.
+
+    Handles common LLM formatting issues:
+    - Raw newlines/tabs inside JSON string values (JSON spec requires \\n escape)
+    - Single quotes instead of double quotes
+    """
     m = re.search(r"TOOL_CALL:\s*(\{.*\})", text, re.DOTALL)
     if not m:
         return None
+    raw = m.group(1)
+
+    # Try direct parse first
     try:
-        return json.loads(m.group(1))
+        return json.loads(raw)
     except json.JSONDecodeError:
-        try:
-            return json.loads(m.group(1).replace("'", '"'))
-        except:
-            return None
+        pass
+
+    # Fix: escape raw control characters inside string values
+    # JSON spec requires \n, \t, \r escapes — LLMs sometimes output raw chars
+    # Strategy: find string boundaries and escape control chars within them
+    fixed = _escape_control_chars_in_strings(raw)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # Try single-quote fix
+    try:
+        return json.loads(raw.replace("'", '"'))
+    except:
+        return None
+
+
+def _escape_control_chars_in_strings(json_str: str) -> str:
+    """Escape raw control characters (newline, tab, etc.) inside JSON string values.
+
+    Walks the JSON string, tracking whether we're inside a quoted string,
+    and replaces raw newlines/tabs/carriage-returns with their escape sequences.
+    """
+    result = []
+    in_string = False
+    escaped = False  # Previous char was backslash
+
+    for ch in json_str:
+        if escaped:
+            result.append(ch)
+            escaped = False
+            continue
+
+        if ch == '\\':
+            result.append(ch)
+            escaped = True
+            continue
+
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+
+        if in_string:
+            if ch == '\n':
+                result.append('\\n')
+            elif ch == '\t':
+                result.append('\\t')
+            elif ch == '\r':
+                result.append('\\r')
+            else:
+                result.append(ch)
+        else:
+            result.append(ch)
+
+    return ''.join(result)
 
 
 def _parse_done(text: str) -> str | None:
