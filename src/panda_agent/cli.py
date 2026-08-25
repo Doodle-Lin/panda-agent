@@ -43,11 +43,11 @@ def main():
     cfg.add_argument("key", nargs="?", default="", help="Config key (for set)")
     cfg.add_argument("value", nargs="?", default="", help="Config value (for set)")
 
-    # evolve
-    ev = sub.add_parser("evolve", help="Run self-evolution loop")
-    ev.add_argument("-t", "--task", type=str, required=True, help="Task to evolve on")
+    # evolve (optional — forced training mode)
+    ev = sub.add_parser("evolve", help="Forced evolution training (optional; learning happens automatically in chat)")
+    ev.add_argument("-t", "--task", type=str, required=True, help="Task to train on")
     ev.add_argument("--target", type=float, default=90.0, help="Target score (default: 90)")
-    ev.add_argument("--rounds", type=int, default=20, help="Max rounds (default: 20, stops early if target reached)")
+    ev.add_argument("--rounds", type=int, default=20, help="Max rounds (default: 20)")
 
     # memory
     mem = sub.add_parser("memory", help="Graph memory operations")
@@ -79,7 +79,16 @@ def main():
 
 
 def cmd_chat(args):
-    """Handle chat command."""
+    """Handle chat command.
+
+    Self-evolution is embedded in daily usage:
+    - Every task completion triggers Learner (Level 2) in background
+    - Recurring structural issues trigger Improver (Level 3) automatically
+    - User sees a subtle learning indicator, not a separate command
+    """
+    from .orchestrator import Learner, Improver
+    from .types import Task, ExecutionResult
+
     config = load_config()
     tui = TUI(color=config.display.color)
     tui.banner()
@@ -88,12 +97,63 @@ def cmd_chat(args):
         config.model.default = args.model
 
     memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
+    learner = Learner(config)
+    improver = Improver(config)
 
     def on_event(et, msg):
         tui.event(et, msg)
 
     def on_reasoning(label, text):
         tui.reasoning(label, text)
+
+    def _learn_after_task(user_input: str, result) -> None:
+        """Silently learn from the task that just completed.
+
+        Called after every task in chat mode. Runs Learner (Level 2)
+        and triggers Improver (Level 3) if evidence is sufficient.
+        """
+        try:
+            # Build ExecutionResult from ReActResult
+            exec_result = ExecutionResult(
+                tool_calls=result.tool_calls,
+                success=result.success,
+                error=result.error,
+                trace=result.trace,
+            )
+            task = Task(instruction=user_input)
+
+            # Level 2: Learn
+            # Quick self-evaluation (don't call LLM for scoring — use heuristics)
+            from .types import Evaluation
+            if result.success and result.tool_calls:
+                score = 80.0
+            elif result.success:
+                score = 60.0
+            else:
+                score = 20.0
+            issues = []
+            if not result.tool_calls and result.success:
+                issues.append("Task completed without using any tools")
+            if result.error:
+                issues.append(f"Error: {result.error[:100]}")
+            evaluation = Evaluation(score=score, issues=issues)
+
+            learning = learner.learn(task, exec_result, evaluation)
+
+            if learning.lessons:
+                tui.event("learner_detail", f"💡 Learned: {learning.lessons[0][:100]}")
+
+            # Level 3: Trigger improvement if enough evidence
+            if learning.trigger_evolution:
+                tui.event("learner_trigger", f"⚠ Auto-evolving: {learning.trigger_reason[:100]}")
+                improvement = improver.improve(evaluation, evidence=learning.trigger_reason)
+                if improvement.patched:
+                    tui.event("improver_done", f"✓ Auto-patched: {improvement.explanation[:100]}")
+                else:
+                    tui.event("improver_detail", f"Patch attempt: {improvement.explanation[:100]}")
+        except Exception as e:
+            # Learning should never crash the chat
+            pass
 
     if args.query:
         # One-shot mode
@@ -102,6 +162,7 @@ def cmd_chat(args):
             tui.answer(result.answer)
         else:
             tui.error(result.error or "Task failed")
+        _learn_after_task(args.query, result)
         return
 
     # Interactive mode
@@ -119,6 +180,9 @@ def cmd_chat(args):
                 tui.answer(result.answer)
             else:
                 tui.error(result.error or "Task failed")
+
+            # Learn from every task — this is the self-evolution in daily use
+            _learn_after_task(user_input, result)
         except (KeyboardInterrupt, EOFError):
             tui.info("\nGoodbye!")
             break
