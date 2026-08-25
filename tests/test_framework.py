@@ -159,6 +159,15 @@ class TestReactParsing:
         text = "DONE: task completed successfully"
         assert _parse_done(text) == "task completed successfully"
 
+    def test_parse_done_multiline(self):
+        """DONE: should capture multi-line answers, not just first line."""
+        text = "DONE: 我是一个AI助手\n1. 文件操作\n2. 命令行\n3. 搜索文件"
+        result = _parse_done(text)
+        assert result is not None
+        assert "文件操作" in result
+        assert "命令行" in result
+        assert "搜索文件" in result
+
     def test_parse_failed(self):
         text = "FAILED: could not find file"
         assert _parse_failed(text) == "could not find file"

@@ -56,9 +56,15 @@ def _parse_tool_call(text: str) -> dict | None:
 
 
 def _parse_done(text: str) -> str | None:
-    """Extract DONE message from LLM response."""
-    m = re.search(r"DONE:\s*(.+?)(?:\n|$)", text, re.DOTALL)
-    return m.group(1).strip() if m else None
+    """Extract DONE message from LLM response.
+    
+    Captures everything after 'DONE:' until end of text (not just first line).
+    This allows multi-line answers like capability lists.
+    """
+    m = re.search(r"DONE:\s*(.+)", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def _parse_failed(text: str) -> str | None:
@@ -324,9 +330,9 @@ def run_react(
             continue
 
         # Fallback: treat as done (non-reasoning model with substantive content)
-        _emit("done", stripped[:200])
+        _emit("done", stripped[:200])  # event display still truncated for terminal
         result.success = True
-        result.answer = stripped
+        result.answer = stripped  # full answer, not truncated
         result.reasoning = llm_resp.reasoning
         result.tool_calls = tool_calls
         result.turns = turn
