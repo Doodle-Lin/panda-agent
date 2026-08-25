@@ -501,15 +501,11 @@ class Improver:
         This is a lightweight behavioral gate: re-execute the same task
         and evaluate the result. If the score improved, the patch is good.
         """
-        # Import here to avoid circular imports at module load time
-        from panda_agent.react import run_react
+        import sys
         from panda_agent.brain import build_system_prompt
         from panda_agent.tools import get_tool_descriptions
 
         try:
-            # Re-run the task that produced the evaluation
-            # We need to reconstruct a minimal task from the evaluation
-            # Use a simple test: can the agent still handle a basic interaction?
             test_prompt = "hello"
             system_prompt = build_system_prompt(get_tool_descriptions(), self.config.agent.max_turns)
             messages = [
@@ -520,15 +516,12 @@ class Improver:
                 messages,
                 self.config.model,
                 model=None,
-                stream=False,
             )
-            # Basic sanity: response should be non-empty and not crash
             if response and len(response.strip()) > 0:
-                # Give a baseline score: the agent still works
                 return max(evaluation.score, 60.0)
             return 0.0
         except Exception as e:
-            print(f"  [Improver] behavioral check error: {e}", file=_sys.stderr)
+            print(f"  [Improver] behavioral check error: {e}", file=sys.stderr)
             return 0.0
 
 
