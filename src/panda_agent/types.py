@@ -39,6 +39,7 @@ class ImprovementResult:
     explanation: str = ""
     test_output: str = ""
     attempts: int = 0
+    score_after: float = 0.0
 
 
 @dataclass

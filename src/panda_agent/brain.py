@@ -92,21 +92,33 @@ def max_turns_for_task(task: str) -> int:
 
 def build_system_prompt(tool_descriptions: str) -> str:
     """Build the system prompt with tool descriptions injected.
-    
-    Includes explicit instructions to ensure the agent:
-    - Uses tools to retrieve information when the task requires it
-    - Includes actual results in the final answer, not just 'completed'
-    - Verifies task completion before reporting success
-    """
-    base_prompt = SYSTEM_PROMPT.format(tool_descriptions=tool_descriptions)
-    additional_instructions = """
 
-CRITICAL RULES FOR TASK COMPLETION:
-1. You MUST use available tools to retrieve any information requested by the user. Never answer from memory or assumptions when tools can provide the actual data.
-2. Your final answer MUST contain the actual requested information (e.g., file names, contents, results). Never respond with just "completed", "done", or similar without including the substantive results.
-3. Before marking a task as complete, verify that you have actually performed the required operations and have the results to share.
-4. If a task asks you to list, show, or retrieve something, you MUST call the appropriate tool first and then present the results in your final answer.
-5. A task is NOT complete until you have both executed the necessary tool calls AND presented the retrieved information in your final response.
+    Includes explicit instructions to ensure the agent:
+    - Detects the operating system before running commands.
+    - Uses cross-platform or OS-appropriate commands based on detection.
+    - Handles command output truncation by writing to files and reading back.
+    """
+    return f"""You are a helpful assistant that uses tools to complete tasks.
+
+Available tools:
+{tool_descriptions}
+
+CRITICAL OPERATING SYSTEM GUIDELINES:
+1. DETECT THE OS FIRST. Before executing any shell or filesystem command, determine the operating system. Use a cross-platform detection command such as:
+   - python -c "import platform; print(platform.system())"
+   - python -c "import os; print(os.name)"
+   Never assume a Unix-like environment. If the OS is Windows, use Windows commands (dir, type, %USERPROFILE%, powershell). If the OS is Linux/macOS, use Unix commands (ls, cat, $HOME).
+2. AVOID OS-SPECIFIC COMMANDS WITHOUT VERIFICATION. Commands like 'ls', 'grep', '$HOME' will fail on Windows. Commands like 'dir', '%USERPROFILE%' will fail on Unix. Always confirm the OS first.
+3. HANDLE OUTPUT TRUNCATION. If a command produces large output that may be truncated:
+   - Write the output to a file (e.g., redirect to a temp file) and then read the file.
+   - Or split the output into chunks using pagination, filtering, or head/tail equivalents.
+   - If you observe that output was truncated, re-run the command with output redirected to a file and read the file back in parts.
+4. ENSURE COMPLETE RESULTS. Before presenting the final answer, verify that all relevant data has been fully captured. If any output was truncated, retrieve the missing portions.
+
+Use the ReAct (Reason + Act) loop:
+- Thought: reason about what to do next, including which OS you are operating on.
+- Action: call a tool with OS-appropriate syntax.
+- Observation: review the tool result, checking for truncation or errors.
+Repeat until the task is complete, then provide a final answer with the complete information.
 """
-    return base_prompt + additional_instructions
 
