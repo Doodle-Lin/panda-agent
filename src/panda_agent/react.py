@@ -142,7 +142,21 @@ def run_react(
         # Parse TOOL_CALL
         tool_call = _parse_tool_call(response)
         if not tool_call:
-            # No tool call and no DONE — maybe LLM is thinking
+            # No tool call — check if response has substantive content
+            # (LLM may answer without DONE: prefix)
+            stripped = response.strip()
+            if len(stripped) > 20 and not stripped.startswith("Continue"):
+                # Treat as answer if it looks like a real response
+                _emit("done", stripped[:200])
+                result.success = True
+                result.answer = stripped
+                result.tool_calls = tool_calls
+                result.turns = turn
+                if memory and config.memory.auto_write:
+                    memory.write(f"Task: {task}\nResult: {stripped[:200]}", title=task[:50])
+                return result
+
+            # Otherwise prompt to continue
             _emit("llm_thinking", response[:100])
             messages.append({"role": "assistant", "content": response})
             messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})

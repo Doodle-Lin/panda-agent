@@ -61,6 +61,10 @@ def call_llm(
         )
         resp.raise_for_status()
 
+        # Force UTF-8: streaming responses often lack charset in Content-Type,
+        # and requests defaults to ISO-8859-1 per HTTP spec, garbling CJK text.
+        resp.encoding = "utf-8"
+
         content = ""
         reasoning = ""
         for line in resp.iter_lines(decode_unicode=True):
