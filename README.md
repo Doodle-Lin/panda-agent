@@ -52,13 +52,17 @@ because "self-evolving" invites inflated expectations.
 |---|---|---|
 | ReAct loop + tool execution | ✅ Working | 6 built-in tools |
 | 3-agent evolution loop | ✅ Working | Executor → Evaluator → Improver |
-| Patch generation + revert | ✅ Working | Auto-backup, revert on test failure |
+| Patch application | ✅ Working | libcst CST rewriting, auto-backup, revert on failure |
 | Brain evolution | ✅ Working | Patches prompt + decision logic |
 | CLI + TUI | ✅ Working | `panda run`, `panda evolve` |
+| **Regression gate** | ✅ Working | Patches must not degrade measured task performance |
+| **Execution boundaries** | ✅ Working | Command allowlist + workspace containment |
 | Graph memory | 🟡 Optional | Requires external server; degrades gracefully |
-| **Patch verification** | 🔴 **Weak** | Unit tests only — does not re-run the task. See [Known Limitations](#known-limitations) |
-| **Sandboxing** | 🔴 **None** | `run_command` executes arbitrary shell. See [Security](#security) |
-| Test coverage of the loop | 🔴 Missing | `orchestrator.py` (420 lines) has no tests |
+| Evolution history → memory | 🔴 Not built | Improver does not learn from past patch outcomes |
+| OS-level sandbox | 🟡 Partial | Allowlist + path containment, but no kernel isolation. See [Security](#security) |
+
+**Test suite: 197 cases** across parsing, patching, benchmarking, the
+orchestrator, and the security boundary.
 
 Read [Known Limitations](#known-limitations) before running this on anything
 you care about.
@@ -178,6 +182,56 @@ for r in result.rounds:
 All three agents are injectable — pass your own `Executor` / `Evaluator` /
 `Improver` to target a different domain (see [Extending](#extending)).
 
+### Gate patches on measured performance
+
+By default the Improver only checks that unit tests still pass. To also require
+that the agent didn't get *worse*, give it a task suite:
+
+```yaml
+# benchmarks/tasks.yaml
+- id: search_with_locations
+  instruction: Find every TODO under src/ and list it with file and line number.
+  scorer: exact_match
+  expected:
+    contains: ["config.py", "7"]
+  weight: 1.5
+
+- id: apply_edit
+  instruction: In config.py, change DEFAULT_PORT from 8080 to 9090.
+  scorer: file_state          # scores the file, not what the agent claims
+  expected:
+    file: config.py
+    contains: "DEFAULT_PORT = 9090"
+    not_contains: "DEFAULT_PORT = 8080"
+  weight: 2.0
+```
+
+```python
+from pathlib import Path
+from panda_agent.benchmark import load_tasks, run_benchmark, estimate_noise
+from panda_agent.orchestrator import Improver
+
+tasks = load_tasks(Path("benchmarks/tasks.yaml"))
+workspace = Path("benchmarks")
+runner = lambda task: my_executor.execute(task).output
+
+# The agent is stochastic, so set tolerance from measured variance rather
+# than guessing: 2 * stdev is a reasonable starting point.
+mean, stdev = estimate_noise(tasks, runner, workspace, runs=3)
+
+improver = Improver(config)
+improver.baseline = run_benchmark(tasks, runner, workspace)
+improver.benchmark_gate = lambda: run_benchmark(tasks, runner, workspace)
+improver.tolerance = max(2.0, 2 * stdev)
+```
+
+A patch that passes `pytest` but drops the benchmark score beyond `tolerance` is
+now reverted, and the reason is fed into the next attempt's prompt.
+
+**Scorer choice matters.** `exact_match` and `file_state` are deterministic and
+reproducible; `llm_judge` is not, and its noise propagates straight into the
+accept/reject decision. Use it only for genuinely open-ended tasks.
+
 ---
 
 ## How Evolution Actually Works
@@ -197,11 +251,21 @@ for JSON: `{"score": 0-100, "issues": [...], "root_cause": "...", "suggested_cha
 - Extracts only the functions relevant to the evaluation (keyword matching) to
   keep the prompt small
 - Asks a code-capable LLM for a patch in `PATCH_START ... PATCH_END` format
-- Applies the patch by replacing the function definition
-- **Runs `pytest tests/`** — if it passes, keep; if not, restore from backup and
-  retry with the test error fed back to the LLM (up to `max_retries`)
+- Applies the patch by replacing the definition via libcst, validating that the
+  result parses **before** writing to disk
+- **Gate 1 — `pytest tests/`.** Answers *"is the code broken?"* If it fails,
+  restore from backup and retry with the error fed back to the LLM.
+- **Gate 2 — regression benchmark.** Answers *"did the agent get worse?"* Runs
+  the task suite and rejects the patch if the weighted score drops beyond
+  tolerance, feeding the reason back so the next attempt isn't blind. Skipped
+  when no suite is configured.
 
 **4. Loop** — until `score >= target_score` or `max_rounds` exhausted.
+
+Gate 2 is the one that makes the loop falsifiable. A patch can be valid Python
+that passes every unit test while making the agent measurably worse — verified
+with an agent that merely stopped emitting line numbers in search results:
+weighted score 100 → 89.3, now rejected.
 
 ### What's evolvable
 
@@ -214,7 +278,7 @@ for JSON: `{"score": 0-100, "issues": [...], "root_cause": "...", "suggested_cha
 | `search_files` | Regex search across files |
 | `list_files` | Directory listing |
 | `patch_file` | Find-and-replace in a file |
-| `run_command` | Execute a shell command ⚠️ [see Security](#security) |
+| `run_command` | Execute an allowlisted command, no shell — [see Security](#security) |
 | `memory_retrieve` | Query graph memory (if enabled) |
 
 `brain.py` — the agent's **mind**:
@@ -303,34 +367,60 @@ over LLM opinion where you can get them.
 
 ## Security
 
-**⚠️ This framework executes LLM-generated code and shell commands with no
-sandboxing. Do not run it on a machine you care about, on production data, or
-with credentials in the environment.**
+The threat model is not a malicious operator. The agent's next action is chosen
+by a model whose context includes file contents and command output, so anything
+it reads can influence what it runs next. Tool arguments are untrusted input.
 
-Specifically:
+### What is enforced
 
-1. **`run_command` uses `shell=True`** ([`tools.py:106`](src/panda_agent/tools.py))
-   with no allowlist. An LLM — or anything that can influence the LLM's output —
-   can execute arbitrary commands with your user's full privileges.
+**Commands run through an allowlist, without a shell.** `run_command` parses the
+string to an argv list and rejects shell metacharacters, then executes with
+`shell=False`. There is no shell to inject into.
 
-2. **The Improver rewrites source files in place.** It patches `tools.py` and
-   `brain.py` inside the installed package directory.
+```bash
+run_command "pytest tests/ -q"              # allowed
+run_command "echo SAFE; echo INJECTED"      # rejected: metacharacter ';'
+run_command "curl http://example.com"       # rejected: 'curl' not on allowlist
+```
 
-3. **The verification gate is bypassable in principle.** Patches are validated by
-   running `pytest tests/`, but the agent also has `patch_file` and
-   `run_command`, and the tests live in the same repository. Nothing structurally
-   prevents an agent from weakening a test rather than fixing the code.
+**File access is confined to a workspace root.** Paths resolve before the
+containment check, so `..` traversal and symlinked escapes are both caught.
 
-4. **No prompt-injection defense.** File contents and command output are fed
-   straight back into the conversation. A file containing adversarial
-   instructions can hijack the loop.
+```bash
+read_file "src/panda_agent/tools.py"        # allowed
+read_file "/etc/passwd"                     # rejected: escapes the workspace
+read_file "a/../../../etc/passwd"           # rejected: escapes the workspace
+```
 
-**Recommended usage until sandboxing lands:** run inside a container or VM, with
-a scoped-down working directory, no credentials in the environment, and a
-read-only mount for anything you don't want touched.
+**Subprocesses get a scrubbed environment.** Variables whose names look like
+credentials (`*KEY*`, `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, …) are removed, so a
+command that dumps its environment is not a credential disclosure.
 
-Hardening this is the top [Roadmap](#roadmap) item. Security reports welcome via
-GitHub issues.
+| Variable | Purpose |
+|---|---|
+| `PANDA_WORKSPACE` | Directory file tools are confined to (default: cwd) |
+| `PANDA_ALLOWED_COMMANDS` | Extra commands to permit, space/comma separated |
+| `PANDA_UNSAFE=1` | Disable enforcement entirely — for isolated environments only |
+
+### What is not
+
+**No OS-level isolation.** The allowlist bounds *which* programs run, not what
+they can do once running. `python3` is permitted because the loop needs it, and
+`python3 -c '...'` can do anything Python can. For untrusted tasks, run the
+whole thing in a container or VM — the allowlist is defense in depth, not a jail.
+
+**The test gate is bypassable in principle.** Patches are validated by running
+`pytest tests/`, but the agent has `patch_file` and the tests live in the same
+repository. Nothing structurally prevents weakening a test instead of fixing the
+code. The regression benchmark makes this harder — a weakened test does not
+improve benchmark score — but the correct fix is verifying in a separate
+checkout. See Roadmap R2.
+
+**No prompt-injection defense.** File contents and command output feed straight
+back into the conversation. A file containing adversarial instructions can still
+steer the loop; the boundaries limit the damage, they don't detect the attempt.
+
+Security reports welcome via GitHub issues.
 
 ---
 
@@ -338,56 +428,44 @@ GitHub issues.
 
 Stated plainly, because these determine whether the project is useful to you:
 
-### 🔴 The evolution loop is open-loop
+### 🔴 The Improver does not learn from its own history
 
-The Improver's gate is *"do the unit tests still pass?"* — **not** *"did the agent
-get better at the task?"* A patch can pass all tests and still make the agent
-worse, and nothing catches that. Worse, `run_evolution` tracks `best_score` but
-never rolls back to the best-scoring version of the code — so the final state is
-whatever the last patch left behind, not the best one found.
+Every improvement attempt starts from zero. The loop knows that round 3 scored
+72, but not that a similar patch was already tried and rejected in round 1. The
+outcome of each patch — accepted, rejected, and why — is discarded.
 
-This is the single most important gap between this project and a genuinely
-self-improving system. See Roadmap R1.
+This is the largest remaining gap, and the most interesting one: graph memory
+already exists but only serves the Executor. Feeding patch outcomes into it
+would let the Improver accumulate meta-knowledge about *how to modify this
+codebase*, not just how to do the task. See Roadmap R1.
 
-### 🔴 No sandbox
+### 🟡 The benchmark gate needs a suite to be meaningful
 
-See [Security](#security).
+`check_no_regression` is only as good as the tasks you give it. The bundled
+suite in `benchmarks/` is a starting point, not a benchmark — five tasks against
+a toy fixture. A real deployment needs tasks representative of your workload,
+and `estimate_noise` run to set the tolerance from measured variance rather than
+the 2.0 default.
 
-### 🔴 The core loop is untested
+### 🟡 No OS-level sandbox
 
-`orchestrator.py` is the largest file (420 lines) and has zero test coverage.
-`tests/test_framework.py` covers types, config, brain, tools, ReAct parsing, LLM,
-and memory — but not the evolution loop or patch application, which is where the
-risk concentrates.
+The allowlist and workspace containment bound the obvious holes, but `python3`
+is necessarily permitted and can do anything Python can. See
+[Security](#security).
 
-### 🟡 Patch application is regex-based
+### 🟡 The ReAct termination heuristic can misfire
 
-[`_replace_function`](src/panda_agent/orchestrator.py) matches
-`^def name\(...\)` with a regex and substitutes until the next top-level `def`.
-This silently fails or corrupts on: methods inside classes, decorated functions,
-nested functions, and async defs. An AST-based rewrite is the correct approach.
+If a response has no `TOOL_CALL` and no `DONE:`, is longer than 20 characters,
+and doesn't start with "Continue", it's treated as a final answer
+([`react.py`](src/panda_agent/react.py)). This exists because some models omit
+the `DONE:` prefix, but a model thinking out loud gets misread as finished.
+Structured output would remove the guesswork.
 
-### 🟡 LLM output parsing is brittle
+### 🟡 Graph memory needs an external server
 
-The ReAct loop has a heuristic fallback: if the response has no `TOOL_CALL` and
-no `DONE:`, but is longer than 20 characters and doesn't start with "Continue",
-it's treated as a final answer ([`react.py:145-157`](src/panda_agent/react.py)).
-This was added because some models don't emit the `DONE:` prefix. It's a
-pragmatic patch over a real problem, but it will misfire — a model thinking out
-loud gets misread as a finished answer.
-
-Similarly, the Evaluator extracts JSON with `re.search(r'\{.*\}')` and does
-`.replace("'", '"')` to coerce single quotes — which corrupts any JSON string
-containing an apostrophe. Parse failure silently yields `score = 50`, which
-pollutes the evolution signal.
-
-### 🟡 Docs/code drift
-
-Earlier versions of this README described an Improver you were expected to
-implement yourself. In the current code the Improver is built-in and specifically
-patches `tools.py` / `brain.py`. This README has been rewritten to match the
-code as of v0.2; if you find a remaining discrepancy, that's a bug — please file
-an issue.
+`memory.enabled: true` expects a side-car service. Absent it, the framework
+degrades gracefully rather than failing — but the feature is effectively off
+until you supply one. See Roadmap R4.
 
 ---
 
@@ -395,77 +473,81 @@ an issue.
 
 Ordered by impact on making this genuinely useful.
 
-### R1 — Close the evolution loop 🔴
+### R1 — Feed evolution history into graph memory 🔴
 
-The core fix. Make the verification gate measure *task performance*, not just
-test passage:
+The most interesting remaining work. Every patch outcome is currently thrown
+away; storing it turns the loop from *"try things"* into *"try things you
+haven't already failed at"*:
 
-- Add a **regression task suite** — a set of tasks with known-good expected
-  outcomes, run before and after every patch
-- Accept a patch only if **the score on that suite does not decrease**
-- **Keep the best-scoring version**, not the last one — snapshot code per round,
-  restore the best at the end
-- Log score deltas per patch so evolution becomes auditable
+- Persist each attempt as a node: target function, patch diff, score delta,
+  accepted/rejected, rejection reason
+- Query it before generating: give the Improver the outcomes of past attempts on
+  the same function
+- Surface the accumulated knowledge, e.g.
+  `✅ accepted (+6.2): added line numbers to search_files output`
+  `❌ rejected (-8.1): switched to JSON output, harder for the LLM to parse`
 
-Without this, "self-evolution" is unfalsifiable. With it, the project has a real
-claim.
+This is what makes the system self-improving rather than merely self-modifying:
+it learns how to modify itself, not just how to do the task.
 
-### R2 — Sandbox execution 🔴
+### R2 — Verify patches in a separate checkout 🔴
 
-- Replace `shell=True` with an allowlist plus argument-list invocation
-- Run patches and commands in a container or a `seccomp`/`nsjail`-style jail
-- Restrict filesystem writes to an explicit workspace root
-- Make the test-verification step run in a **separate checkout**, so an agent
-  cannot weaken the tests that gate it
+The agent can currently reach the tests that gate it. Copying the tree to a
+scratch directory, applying the patch there, and running the suite against that
+copy makes weakening the gate structurally impossible rather than merely
+discouraged.
 
-### R3 — Test the loop 🔴
+### R3 — OS-level isolation 🟡
 
-- Unit tests for `_replace_function`, `_extract_patch`, `_extract_relevant`
-- Integration test for `run_evolution` with a mocked LLM: assert patch-kept and
-  patch-reverted paths both work
-- **Adversarial test: a patch that weakens a test must be rejected**
+The allowlist bounds which programs run; it cannot bound what `python3` does
+once running. Container or `seccomp`/`nsjail` execution for the command tool and
+the test runner.
 
-### R4 — AST-based patching 🟡
-
-Replace the regex function-replacement with `ast` / `libcst`. Correctly handles
-methods, decorators, async, and nested definitions. Validate the patched module
-parses *before* writing to disk.
-
-### R5 — Structured LLM output 🟡
-
-- Use JSON mode / structured output where the backend supports it
-- Replace the `re.search(r'\{.*\}')` + quote-swap hack with a real parser
-- Distinguish "parse failed" from "score is 50" instead of collapsing both
-
-### R6 — Bundle a reference graph-memory server 🟡
+### R4 — Bundle a reference graph-memory server 🟡
 
 Ship a minimal embedding + PageRank implementation so `memory.enabled: true`
 works out of the box instead of requiring an unbundled service.
 
-### R7 — Observability 🟢
+### R5 — Observability 🟢
 
-- Persist every round: task, score, patch diff, test output, score delta
+- Persist every round: task, score, patch diff, test output, benchmark delta
 - `panda history` to inspect the evolution trail
 - Export traces for analysis
 
-### R8 — Packaging 🟢
+### R6 — Packaging 🟢
 
 - PyPI release
-- Pin dependency lower bounds properly
 - CI: pytest + ruff + mypy on PRs
+
+---
+
+## Recent Changes
+
+Work completed against the earlier roadmap, with the evidence that motivated it:
+
+| Change | Why |
+|---|---|
+| **Regression gate** (`benchmark.py`) | The old gate asked "do tests pass?", not "did the agent improve?". Verified: an agent that merely drops line numbers from search output scores 100 → 89.3 and is now rejected, while passing every unit test. |
+| **libcst patching** (`patching.py`) | The regex replacement failed on decorated, `async`, nested and class-scoped definitions. Worst case, a function body containing the text `\ndef ` truncated the file into a syntax error *before* pytest could catch it. |
+| **Strict evaluation parsing** (`parsing.py`) | A parse failure silently became `score = 50`, so the Improver optimised against noise. Failures now retry once, then report no signal. |
+| **Execution boundaries** (`security.py`) | `shell=True` was verified exploitable: `echo SAFE; echo INJECTED` ran both halves. File tools accepted `..` traversal. |
+| **Improver prompt fix** | `_IMPROVE_PROMPT` contained a literal `{code_here}` that `str.format` treated as a field, so *every* call raised `KeyError` — the core mechanism had never run. Found by writing the first test for it. |
+| **Loop test coverage** | `orchestrator.py` went from zero tests to 19, which is how the prompt bug surfaced. |
+
+Test suite: 19 → 197 cases.
 
 ---
 
 ## Contributing
 
-Contributions welcome, particularly on R1–R3 — those are the difference between a
-demo and a tool.
+Contributions welcome, particularly on R1 and R2 — those are the difference
+between a demo and a tool.
 
 ```bash
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent
 pip install -e ".[test]"
-pytest tests/
+pytest tests/          # 197 cases, ~2s
 ```
 
 Guidelines:
@@ -474,12 +556,17 @@ Guidelines:
   loop or patch application.
 - **Don't weaken the verification gate** to make a patch land. If the gate is
   wrong, fix the gate deliberately and say so.
+- **Don't delete a regression test to make a change pass.** Several tests exist
+  specifically to pin behaviour that was once broken — notably
+  `test_patch_that_passes_tests_but_degrades_is_rejected`, which is the whole
+  reason the benchmark gate exists. If one blocks you, that is information.
 - **Keep memory optional.** Graceful degradation when the graph server is absent
   is a hard requirement.
 - **Match docs to code.** If behavior changes, update this README in the same PR.
 
-Good first issues: R4 (AST patching) and R5 (structured output) are
-self-contained and high-value.
+Good first issues: R4 (bundle a reference memory server) and R5 (observability)
+are self-contained. R1 is the interesting one if you want to work on what makes
+this project distinctive.
 
 ---
 
