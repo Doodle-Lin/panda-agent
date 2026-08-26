@@ -1,14 +1,12 @@
 # 🐼 PandaAgent
 
-**一个会改自己代码的 Agent 框架 —— 并且能证明这次改动真的让它变好了。**
+**让 LLM 用工具完成任务，再通过实测循环改进这些工具和决策逻辑。** 补丁通过测试门禁后才会保留；配置 benchmark 门禁时，还必须证明任务表现没有退化。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-197%20passing-brightgreen.svg)](#测试)
 
 [English](README.md) · **简体中文**
-
-大多数「自我进化 Agent」项目让 LLM 改自己的源码，就管这叫进化。但难点从来不是**生成补丁** —— 现在的模型写个补丁毫无压力。难点是**判断这个补丁到底让系统变好了还是变坏了**。PandaAgent 就是围绕这个问题构建的。
 
 ```
                     ┌─────────────────────────────────────┐
@@ -43,22 +41,22 @@
 
 ## 项目状态
 
-**Alpha —— 能跑的原型，不是生产就绪。** 先说清楚，因为「自我进化」这个词太容易让人期待过高。
+**Alpha —— 能跑的原型，不是生产就绪。**
 
 | 组件 | 状态 | 说明 |
 |---|---|---|
-| ReAct 循环 + 工具执行 | ✅ 可用 | 6 个内置工具 |
+| ReAct 循环 + 工具执行 | ✅ 可用 | 注册了 8 个工具：6 个任务工具 + 2 个记忆工具 |
 | 三 Agent 进化循环 | ✅ 可用 | Executor → Evaluator → Improver |
 | 补丁应用 | ✅ 可用 | libcst CST 重写，自动备份，失败回滚 |
 | 脑进化 | ✅ 可用 | 改提示词 + 决策逻辑 |
-| CLI + TUI | ✅ 可用 | `panda run`、`panda evolve` |
-| **回归门禁** | ✅ 可用 | 补丁不得让实测任务表现下降 |
+| CLI + TUI | ✅ 可用 | `panda`、`panda chat -q`、`panda evolve -t` |
+| **回归门禁** | ✅ 可用 | 可选门禁，拒绝实测任务表现退化的补丁 |
 | **执行边界** | ✅ 可用 | 命令白名单 + 工作区隔离 |
 | 图记忆 | 🟡 可选 | 需要外部服务；缺失时优雅降级 |
 | 进化历史 → 记忆 | 🔴 未做 | Improver 不会从历史补丁的成败中学习 |
 | 操作系统级沙箱 | 🟡 部分 | 有白名单和路径边界，但无内核隔离。见[安全](#安全) |
 
-**测试：197 个用例**，覆盖解析、补丁、benchmark、orchestrator 和安全边界。
+**测试：197 个 pytest 用例**，覆盖解析、补丁、benchmark、orchestrator 和安全边界。
 
 跑在你在意的东西上之前，请先读[已知限制](#已知限制)。
 
@@ -66,13 +64,7 @@
 
 ## 为什么做这个
 
-自我进化系统的核心矛盾：**验证比生成难得多。**
-
-给 LLM 一份评估报告让它改代码，它会给你一个看起来很合理的补丁。问题是——你怎么知道这个补丁不是让系统变差了？
-
-「单元测试通过」回答的是**「代码有没有坏」**，不是**「Agent 有没有变好」**。一个补丁可以完美通过所有测试，同时让 Agent 的实际表现明显下降。这就是绝大多数自进化项目的真实状态：它们在盲目地改。
-
-PandaAgent 的做法是给补丁加第二道门禁：**跑一组有明确预期结果的回归任务，分数不下降才接受。** 这让「进化」变成一个可以被证伪的说法。
+单元测试通过只能说明代码没有坏，不能说明 Agent 仍然能做好任务。配置好 baseline 和门禁后，`benchmark.py` 会在补丁前后给任务集打分，`check_no_regression` 会拒绝不完整的结果，或拒绝加权分数跌出容忍度的补丁。没有配置任务集时，自动检查只有单元测试门禁。
 
 ---
 
@@ -84,13 +76,13 @@ PandaAgent 的做法是给补丁加第二道门禁：**跑一组有明确预期�
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent
 pip install -e ".[test]"
-pytest tests/          # 197 个用例，约 2 秒
+pytest tests/          # 验证安装
 ```
 
 ### 配置
 
 ```bash
-panda config init      # 生成 ~/.panda/config.yaml
+panda config init      # 生成 ~/.panda/config.yaml（或 $PANDA_HOME/config.yaml）
 ```
 
 ```yaml
@@ -106,7 +98,7 @@ agent:
   max_retries: 3
 
 memory:
-  enabled: false                          # 图记忆默认关闭
+  enabled: true                           # 服务不可用时会优雅降级
   graph_url: "http://127.0.0.1:9121"
 
 evolution:
@@ -124,80 +116,28 @@ panda config show      # 输出中 api_key 会被脱敏
 ### 跑一个任务（不进化）
 
 ```bash
-panda run "列出 src/ 下所有 Python 文件，找出最大的那个"
+panda chat -q "列出 src/ 下所有 Python 文件，找出最大的那个"
 ```
 
 ### 跑进化循环
 
 ```bash
-panda evolve "搜索代码库里的 TODO 注释并总结" \
-    --target-score 90 \
-    --max-rounds 3
+panda evolve -t "搜索代码库里的 TODO 注释并总结" \
+    --target 90 \
+    --rounds 3
 ```
 
-每一轮发生什么：
+循环结束后，`cmd_evolve` 会打印一行这样的摘要：
 
+```text
+Rounds: {n}, Score: {score}, Patches: {n}
 ```
-第 1 轮  Executor  → 通过 ReAct 执行任务
-         Evaluator → 打 65/100，根因：「search_files 不输出行号，
-                     Agent 无法引用具体位置」
-         Improver  → 修改 tools.py 里的 _tool_search_files
-                     跑 pytest → 通过 → 跑 benchmark → 未退化 → 保留
-
-第 2 轮  Executor  → 用修改后的工具重跑
-         Evaluator → 打 92/100 → 达到目标，停止
-```
-
-### 让补丁必须通过实测
-
-默认情况下 Improver 只检查单元测试还过不过。想同时要求 Agent **没有变差**，给它一组任务：
-
-```yaml
-# benchmarks/tasks.yaml
-- id: search_with_locations
-  instruction: 找出 src/ 下所有 TODO，列出文件名和行号
-  scorer: exact_match
-  expected:
-    contains: ["config.py", "7"]
-  weight: 1.5
-
-- id: apply_edit
-  instruction: 把 config.py 里的 DEFAULT_PORT 从 8080 改成 9090
-  scorer: file_state          # 看文件实际状态，不看 Agent 自己怎么说
-  expected:
-    file: config.py
-    contains: "DEFAULT_PORT = 9090"
-    not_contains: "DEFAULT_PORT = 8080"
-  weight: 2.0
-```
-
-```python
-from pathlib import Path
-from panda_agent.benchmark import load_tasks, run_benchmark, estimate_noise
-from panda_agent.orchestrator import Improver
-
-tasks = load_tasks(Path("benchmarks/tasks.yaml"))
-workspace = Path("benchmarks")
-runner = lambda task: my_executor.execute(task).output
-
-# Agent 本身是随机的，容忍度应该用实测方差来定，不要靠猜。
-# 2 * stdev 是个合理的起点。
-mean, stdev = estimate_noise(tasks, runner, workspace, runs=3)
-
-improver = Improver(config)
-improver.baseline = run_benchmark(tasks, runner, workspace)
-improver.benchmark_gate = lambda: run_benchmark(tasks, runner, workspace)
-improver.tolerance = max(2.0, 2 * stdev)
-```
-
-这样一个「pytest 通过但 benchmark 分数掉了超过容忍度」的补丁会被回滚，而且拒绝原因会喂给下一次尝试的提示词。
-
-**打分器的选择很关键。** `exact_match` 和 `file_state` 是确定性的、可复现的；`llm_judge` 不是，它的噪声会直接传导到「接受/拒绝」的决策里。只在任务真的开放到没法用前两种时才用它。
 
 ### Python API
 
 ```python
-from panda_agent import run_evolution, Task
+from panda_agent.orchestrator import run_evolution
+from panda_agent.types import Task
 
 result = run_evolution(
     executor=None,      # None = 用内置默认实现
@@ -211,10 +151,39 @@ result = run_evolution(
 print(f"最终分数: {result.final_score}")
 print(f"保留的补丁数: {result.total_patches}")
 for r in result.rounds:
-    print(f"  第 {r.round_num} 轮: {r.evaluation.score:.0f} — {r.evaluation.root_cause}")
+    if r.evaluation:
+        print(f"  第 {r.round_num} 轮: {r.evaluation.score:.0f} — {r.evaluation.root_cause}")
 ```
 
 三个 Agent 都可注入 —— 传你自己的 `Executor` / `Evaluator` / `Improver` 就能切换到别的领域（见[扩展](#扩展)）。
+
+### 让补丁必须通过实测
+
+Improver 总会检查单元测试；要同时拒绝让 Agent 在代表性任务上变差的补丁，可以为它配置 baseline 和 benchmark 门禁：
+
+```yaml
+# benchmarks/tasks.yaml
+- id: search_with_locations
+  instruction: Find every TODO comment under fixtures/sample_project/ and list them with their file name and line number.
+  scorer: exact_match
+  expected:
+    contains: ["config.py", "handlers.py", "7", "11"]
+    not_contains: ["no TODO"]
+  weight: 1.5
+
+- id: apply_edit
+  instruction: In fixtures/sample_project/config.py, change DEFAULT_PORT from 8080 to 9090. Change nothing else.
+  scorer: file_state          # 看文件实际状态，不看 Agent 自己怎么说
+  expected:
+    file: fixtures/sample_project/config.py
+    contains: "DEFAULT_PORT = 9090"
+    not_contains: "DEFAULT_PORT = 8080"
+  weight: 2.0
+```
+
+设置 `Improver.baseline`、`Improver.benchmark_gate` 和容忍度的完整示例见 [benchmark 实战说明](docs/benchmark.md)。
+补丁即使通过 `pytest`，只要加权分数跌出容忍度，也会被回滚，拒绝原因还会传给下一次尝试。
+文档记录的实测结果是 `100 → 89.3` 的退化。
 
 ---
 
@@ -251,6 +220,7 @@ for r in result.rounds:
 | `patch_file` | 文件内查找替换 |
 | `run_command` | 执行白名单内命令，不走 shell —— 见[安全](#安全) |
 | `memory_retrieve` | 查图记忆（如启用） |
+| `memory_write` | 写入图记忆（如启用） |
 
 `brain.py` —— Agent 的**「脑」**：
 
@@ -264,7 +234,7 @@ for r in result.rounds:
 
 ## 图记忆
 
-可选的联想记忆，后端是外部图服务。用嵌入相似度加 Personalized PageRank 扩散，所以检索出来的是**相关**知识，不只是字面相似的文本。
+可选的联想记忆，后端是外部图服务。`MemoryClient` 用嵌入相似度加 Personalized PageRank 扩散来检索相关知识。
 
 ```yaml
 memory:
@@ -273,19 +243,7 @@ memory:
   auto_write: true      # 自动持久化任务结果
 ```
 
-```python
-from panda_agent.memory import MemoryClient
-
-mem = MemoryClient()
-if mem.is_available():
-    mem.write("老显卡上 vLLM 需要加 --enforce-eager", title="vllm-tip")
-    ctx = mem.retrieve_context("为什么 vllm 启动很慢", top_k=3)
-    # → 返回可直接注入 LLM 的 markdown 块
-```
-
-**设计说明：** 服务挂掉时每个方法都降级为空操作 —— `retrieve` 返回 `[]`，`write` 返回 `{"error": ...}`，不抛异常。记忆是增强项，永远不是硬依赖。这是刻意的：一个因为旁路服务连不上就崩掉的 Agent 框架没法用。
-
-**当前限制：** 图服务是独立项目，没打包进来，所以这个特性不太好试。打包一个最小参考实现在[路线图](#路线图)里。
+服务不可用时，`retrieve` 返回 `[]`，`write` 返回错误字典；记忆始终是可选增强。图服务没有打包进来，路线图里计划提供参考实现（见[路线图](#路线图)）。
 
 ---
 
@@ -317,7 +275,7 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 |---|---|
 | `PANDA_WORKSPACE` | 文件工具的边界目录（默认当前目录） |
 | `PANDA_ALLOWED_COMMANDS` | 额外允许的命令，空格或逗号分隔 |
-| `PANDA_UNSAFE=1` | 完全关闭强制 —— 仅用于隔离环境 |
+| `PANDA_UNSAFE=1` | 关闭路径包含检查 —— 仅用于隔离环境 |
 
 ### 还没有的
 
@@ -333,17 +291,17 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 ## 已知限制
 
-直说，因为这些决定了这个项目对你有没有用：
+这些限制会影响你决定在哪些场景使用它：
 
 ### 🔴 Improver 不从自己的历史里学习
 
 每次改进都从零开始。循环知道第 3 轮打了 72 分，但不知道第 1 轮已经试过类似的补丁并且被拒了。每个补丁的结果 —— 接受、拒绝、以及为什么 —— 全部丢弃。
 
-这是**剩下最大的缺口，也是最有意思的一个**：图记忆已经存在，但只服务 Executor。把补丁结果喂进去，Improver 就能积累关于「怎么改这个代码库」的元知识，而不只是「怎么做这个任务」。见路线图 R1。
+这是**剩下最大的缺口，也是最有意思的一个**：图记忆已经能提供任务上下文、也能被工具访问，但补丁结果还没有被记录进去。把这些结果喂进去，Improver 就能积累关于「怎么改这个代码库」的元知识，而不只是「怎么做这个任务」。见路线图 R1。
 
 ### 🟡 benchmark 门禁需要有任务集才有意义
 
-`check_no_regression` 的质量完全取决于你给它什么任务。`benchmarks/` 里自带的那套是起点，不是 benchmark —— 5 个任务、玩具级 fixture。真实部署需要能代表你实际工作负载的任务，并且跑 `estimate_noise` 用实测方差来定容忍度，而不是用默认的 2.0。
+`check_no_regression` 的质量完全取决于你给它什么任务。`benchmarks/` 里自带的那套是起点，不是 benchmark —— 5 个任务、玩具级 fixture。真实部署需要能代表你实际工作负载的任务，以及适合该工作负载的容忍度。
 
 ### 🟡 没有操作系统级沙箱
 
@@ -400,54 +358,9 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 ---
 
-## 近期改动
-
-已完成的路线图项，附上当初促成它们的证据：
-
-| 改动 | 为什么 |
-|---|---|
-| **回归门禁**（`benchmark.py`） | 旧门禁问的是「测试过吗」，不是「Agent 变好了吗」。实测验证：一个仅仅不再输出行号的 Agent，加权分 100 → 89.3，现在会被拒绝 —— 而它能通过全部单元测试。 |
-| **libcst 补丁**（`patching.py`） | 正则替换在装饰器、`async`、嵌套函数、类内定义上会失败。最糟的情况：函数体里含有 `\ndef ` 这段文本时，文件被截断成语法错误状态，**而且发生在 pytest 能发现之前**。 |
-| **严格评估解析**（`parsing.py`） | 解析失败会静默变成 `score = 50`，于是 Improver 在对着噪声做优化。现在失败会重试一次，然后明确报告「没有信号」。 |
-| **执行边界**（`security.py`） | `shell=True` 经实测可利用：`echo SAFE; echo INJECTED` 两半都执行了。文件工具接受 `..` 穿越。 |
-| **Improver 提示词修复** | `_IMPROVE_PROMPT` 里有个字面量 `{code_here}`，被 `str.format` 当成待填字段，所以**每一次调用都抛 `KeyError`** —— 这个自进化框架的核心机制从未运行过。是给它写第一个测试时发现的。 |
-| **循环测试覆盖** | `orchestrator.py` 从 0 个测试到 19 个，上面那个提示词 bug 就是这么暴露的。 |
-
-测试规模：19 → 197 个用例。
-
----
-
 ## 扩展
 
-实现三个角色，就能把这个循环对准你自己的领域：
-
-```python
-from panda_agent.types import Task, ExecutionResult, Evaluation
-
-class ImageExecutor:
-    def execute(self, task: Task) -> ExecutionResult:
-        # 跑你自己的流程
-        return ExecutionResult(output_path="out.jpg", success=True, tool_calls=[])
-
-class ImageEvaluator:
-    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation:
-        score = my_quality_metric(result.output_path)   # 比如用 VLM 打分
-        return Evaluation(
-            score=score,
-            issues=["背景模糊不均匀"],
-            root_cause="高斯核大小是硬编码的",
-            suggested_changes="让核大小自适应图像分辨率",
-        )
-
-run_evolution(
-    executor=ImageExecutor(),
-    evaluator=ImageEvaluator(),
-    improver=None,          # 内置 Improver 会改 tools.py
-    task=Task(input_path="in.jpg", instruction="把背景模糊掉"),
-)
-```
-
-完整示例见 `plugins/photo_edit/`。
+三个角色都可以注入：为你的领域提供 `Executor`、`Evaluator` 和 `Improver` 即可。完整示例见 `plugins/photo_edit/`。
 
 **Evaluator 的设计是杠杆所在。** 含糊的评估产出含糊的 `root_cause`，进而产出没用的补丁。评估越具体、越有诊断性，进化效果越好。能用客观指标的地方就别用 LLM 的主观判断。
 
@@ -456,10 +369,10 @@ run_evolution(
 ## 测试
 
 ```bash
-pytest tests/ -q          # 197 个用例，约 2 秒
+pytest tests/ -q          # 197 个 pytest 用例
 ```
 
-| 文件 | 用例数 | 覆盖 |
+| 文件 | 测试函数数 | 覆盖 |
 |---|---|---|
 | `test_framework.py` | 32 | types、config、brain、tools、ReAct 解析、LLM、memory |
 | `test_security.py` | 32 | 命令注入、路径穿越、环境变量清理 |
@@ -468,7 +381,13 @@ pytest tests/ -q          # 197 个用例，约 2 秒
 | `test_patching.py` | 22 | 装饰器、async、嵌套、类方法、常量替换 |
 | `test_orchestrator.py` | 19 | 补丁保留/回滚/因退化被拒、Evaluator 重试、循环计分 |
 
-有几个测试是专门用来**钉住曾经坏过的行为**的，最重要的是 `test_patch_that_passes_tests_but_degrades_is_rejected` —— 整个 benchmark 门禁存在的理由就是它。如果哪个测试挡住了你，那是信息，不是障碍。
+表中统计的是测试函数；参数化测试展开后，pytest 收集到的用例总数是 197。
+
+测试套件也覆盖曾经出过问题的行为，尤其是 `test_patch_that_passes_tests_but_degrades_is_rejected`。
+
+---
+
+近期改动及其背后的原因见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -508,4 +427,4 @@ pytest tests/
 
 ## 许可证
 
-MIT —— 见 [LICENSE](LICENSE)。
+MIT。

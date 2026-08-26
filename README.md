@@ -1,6 +1,6 @@
 # 🐼 PandaAgent
 
-**A self-evolving agent framework where the agent rewrites its own code — and proves the rewrite actually helped.**
+**Give an LLM tools to complete a task, then improve those tools and its decision logic through a measured loop.** Patches are kept when the test gate passes and, when configured, a benchmark gate shows no regression.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -8,10 +8,6 @@
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 **English** · [简体中文](README.zh-CN.md)
-
-Most "self-improving agent" projects let an LLM patch its own source and call it
-evolution. The hard part isn't generating the patch — it's **knowing whether the
-patch made things better or worse**. PandaAgent is built around that question.
 
 ```
                     ┌─────────────────────────────────────┐
@@ -48,23 +44,22 @@ verification gate before it's kept.
 
 ## Project Status
 
-**Alpha — working prototype, not production-ready.** Being upfront about this
-because "self-evolving" invites inflated expectations.
+**Alpha — working prototype, not production-ready.**
 
 | Component | Status | Notes |
 |---|---|---|
-| ReAct loop + tool execution | ✅ Working | 6 built-in tools |
+| ReAct loop + tool execution | ✅ Working | 8 registered tools: 6 task tools + 2 memory tools |
 | 3-agent evolution loop | ✅ Working | Executor → Evaluator → Improver |
 | Patch application | ✅ Working | libcst CST rewriting, auto-backup, revert on failure |
 | Brain evolution | ✅ Working | Patches prompt + decision logic |
-| CLI + TUI | ✅ Working | `panda run`, `panda evolve` |
-| **Regression gate** | ✅ Working | Patches must not degrade measured task performance |
+| CLI + TUI | ✅ Working | `panda`, `panda chat -q`, `panda evolve -t` |
+| **Regression gate** | ✅ Working | Optional gate rejects measured task regressions |
 | **Execution boundaries** | ✅ Working | Command allowlist + workspace containment |
 | Graph memory | 🟡 Optional | Requires external server; degrades gracefully |
 | Evolution history → memory | 🔴 Not built | Improver does not learn from past patch outcomes |
 | OS-level sandbox | 🟡 Partial | Allowlist + path containment, but no kernel isolation. See [Security](#security) |
 
-**Test suite: 197 cases** across parsing, patching, benchmarking, the
+**Test suite: 197 pytest cases** across parsing, patching, benchmarking, the
 orchestrator, and the security boundary.
 
 Read [Known Limitations](#known-limitations) before running this on anything
@@ -74,17 +69,12 @@ you care about.
 
 ## Why This Exists
 
-The interesting claim in self-evolving agents is *"the agent gets better at its
-job over time."* Almost every implementation fails to substantiate it, because
-they conflate two very different things:
-
-1. **The patch is syntactically valid and tests pass** ← easy, most projects stop here
-2. **The agent actually performs better on the task** ← hard, this is what matters
-
-PandaAgent's design goal is to close gap #2. The current implementation does #1
-and has the architecture for #2 (see [Roadmap](#roadmap)) — the honest state of
-things is that the verification gate is the project's main open problem, and it's
-being worked on in the open rather than papered over.
+A passing unit-test suite shows that the code still works; it does not measure
+whether an agent still performs its task well. With a configured baseline and
+gate, `benchmark.py` scores a task suite before and after a patch, and
+`check_no_regression` rejects an incomplete result or a weighted score drop
+beyond the configured tolerance. Without a configured suite, the unit-test gate
+is the only automatic check.
 
 ---
 
@@ -102,7 +92,7 @@ pytest tests/          # verify install
 ### Configure
 
 ```bash
-panda config init      # writes ~/.panda/config.yaml
+panda config init      # writes ~/.panda/config.yaml (or $PANDA_HOME/config.yaml)
 ```
 
 ```yaml
@@ -118,7 +108,7 @@ agent:
   max_retries: 3
 
 memory:
-  enabled: false                          # graph memory is opt-in
+  enabled: true                           # unavailable service is handled gracefully
   graph_url: "http://127.0.0.1:9121"
 
 evolution:
@@ -138,34 +128,28 @@ fallback.
 ### Run a task (no evolution)
 
 ```bash
-panda run "list all Python files in src/ and report the largest one"
+panda chat -q "list all Python files in src/ and report the largest one"
 ```
 
 ### Run the evolution loop
 
 ```bash
-panda evolve "search the codebase for TODO comments and summarize them" \
-    --target-score 90 \
-    --max-rounds 3
+panda evolve -t "search the codebase for TODO comments and summarize them" \
+    --target 90 \
+    --rounds 3
 ```
 
-What happens each round:
+After the loop, `cmd_evolve` prints one summary line in this form:
 
-```
-Round 1  Executor  → runs the task via ReAct
-         Evaluator → scores 65/100, root cause: "search_files has no
-                     line-number output, agent couldn't cite locations"
-         Improver  → patches _tool_search_files in tools.py
-                     runs pytest → passed → patch kept
-
-Round 2  Executor  → re-runs with the patched tool
-         Evaluator → scores 92/100 → target reached, stop
+```text
+Rounds: {n}, Score: {score}, Patches: {n}
 ```
 
 ### Python API
 
 ```python
-from panda_agent import run_evolution, Task
+from panda_agent.orchestrator import run_evolution
+from panda_agent.types import Task
 
 result = run_evolution(
     executor=None,      # None = use built-in defaults
@@ -179,7 +163,8 @@ result = run_evolution(
 print(f"final score: {result.final_score}")
 print(f"patches kept: {result.total_patches}")
 for r in result.rounds:
-    print(f"  round {r.round_num}: {r.evaluation.score:.0f} — {r.evaluation.root_cause}")
+    if r.evaluation:
+        print(f"  round {r.round_num}: {r.evaluation.score:.0f} — {r.evaluation.root_cause}")
 ```
 
 All three agents are injectable — pass your own `Executor` / `Evaluator` /
@@ -187,53 +172,35 @@ All three agents are injectable — pass your own `Executor` / `Evaluator` /
 
 ### Gate patches on measured performance
 
-By default the Improver only checks that unit tests still pass. To also require
-that the agent didn't get *worse*, give it a task suite:
+The Improver always checks the unit tests. To also reject patches that make the
+agent worse at representative tasks, configure a baseline and benchmark gate
+with a task suite such as:
 
 ```yaml
 # benchmarks/tasks.yaml
 - id: search_with_locations
-  instruction: Find every TODO under src/ and list it with file and line number.
+  instruction: Find every TODO comment under fixtures/sample_project/ and list them with their file name and line number.
   scorer: exact_match
   expected:
-    contains: ["config.py", "7"]
+    contains: ["config.py", "handlers.py", "7", "11"]
+    not_contains: ["no TODO"]
   weight: 1.5
 
 - id: apply_edit
-  instruction: In config.py, change DEFAULT_PORT from 8080 to 9090.
+  instruction: In fixtures/sample_project/config.py, change DEFAULT_PORT from 8080 to 9090. Change nothing else.
   scorer: file_state          # scores the file, not what the agent claims
   expected:
-    file: config.py
+    file: fixtures/sample_project/config.py
     contains: "DEFAULT_PORT = 9090"
     not_contains: "DEFAULT_PORT = 8080"
   weight: 2.0
 ```
 
-```python
-from pathlib import Path
-from panda_agent.benchmark import load_tasks, run_benchmark, estimate_noise
-from panda_agent.orchestrator import Improver
-
-tasks = load_tasks(Path("benchmarks/tasks.yaml"))
-workspace = Path("benchmarks")
-runner = lambda task: my_executor.execute(task).output
-
-# The agent is stochastic, so set tolerance from measured variance rather
-# than guessing: 2 * stdev is a reasonable starting point.
-mean, stdev = estimate_noise(tasks, runner, workspace, runs=3)
-
-improver = Improver(config)
-improver.baseline = run_benchmark(tasks, runner, workspace)
-improver.benchmark_gate = lambda: run_benchmark(tasks, runner, workspace)
-improver.tolerance = max(2.0, 2 * stdev)
-```
-
-A patch that passes `pytest` but drops the benchmark score beyond `tolerance` is
-now reverted, and the reason is fed into the next attempt's prompt.
-
-**Scorer choice matters.** `exact_match` and `file_state` are deterministic and
-reproducible; `llm_judge` is not, and its noise propagates straight into the
-accept/reject decision. Use it only for genuinely open-ended tasks.
+Set `Improver.baseline`, `Improver.benchmark_gate`, and a tolerance before the
+loop; the full wiring and tolerance guidance are in the [benchmark walkthrough](docs/benchmark.md).
+A patch that passes `pytest` but drops the weighted score beyond the tolerance
+is reverted, with the reason fed into the next attempt. The documented
+experiment records the measured `100 → 89.3` regression.
 
 ---
 
@@ -283,6 +250,7 @@ weighted score 100 → 89.3, now rejected.
 | `patch_file` | Find-and-replace in a file |
 | `run_command` | Execute an allowlisted command, no shell — [see Security](#security) |
 | `memory_retrieve` | Query graph memory (if enabled) |
+| `memory_write` | Write to graph memory (if enabled) |
 
 `brain.py` — the agent's **mind**:
 
@@ -297,9 +265,9 @@ breaking callers.
 
 ## Graph Memory
 
-Optional associative memory backed by an external graph server. Uses embedding
-similarity plus Personalized PageRank diffusion, so retrieval surfaces
-*related* knowledge, not just lexically similar text.
+Optional associative memory backed by an external graph server. `MemoryClient`
+uses embedding similarity plus Personalized PageRank diffusion to retrieve
+related knowledge.
 
 ```yaml
 memory:
@@ -308,85 +276,9 @@ memory:
   auto_write: true      # persist task outcomes automatically
 ```
 
-```python
-from panda_agent.memory import MemoryClient
-
-mem = MemoryClient()
-if mem.is_available():
-    mem.write("vLLM needs --enforce-eager for older GPUs", title="vllm-tip")
-    ctx = mem.retrieve_context("why is vllm slow to start", top_k=3)
-    # → formatted markdown block for LLM injection
-```
-
-**Design note:** every method degrades to a no-op if the server is down —
-`retrieve` returns `[]`, `write` returns `{"error": ...}`, nothing raises. Memory
-is an enhancement, never a hard dependency. This is deliberate: an agent
-framework that dies because a side-car service is unreachable is not usable.
-
-**Current limitation:** the graph server is a separate project and not bundled
-here, which makes this feature hard to try. Bundling a minimal
-reference implementation is on the [Roadmap](#roadmap).
-
----
-
-## Extending
-
-Point the loop at your own domain by implementing the three roles:
-
-```python
-from panda_agent.types import Task, ExecutionResult, Evaluation
-
-class ImageExecutor:
-    def execute(self, task: Task) -> ExecutionResult:
-        # run your pipeline
-        return ExecutionResult(output_path="out.jpg", success=True, tool_calls=[])
-
-class ImageEvaluator:
-    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation:
-        score = my_quality_metric(result.output_path)   # e.g. a VLM judge
-        return Evaluation(
-            score=score,
-            issues=["background blur is uneven"],
-            root_cause="gaussian kernel size is hardcoded",
-            suggested_changes="make kernel size adaptive to image resolution",
-        )
-
-run_evolution(
-    executor=ImageExecutor(),
-    evaluator=ImageEvaluator(),
-    improver=None,          # built-in Improver patches tools.py
-    task=Task(input_path="in.jpg", instruction="blur the background"),
-)
-```
-
-See `plugins/photo_edit/` for a complete worked example.
-
-**Evaluator design is where the leverage is.** A vague evaluator produces vague
-`root_cause` strings, which produce useless patches. The more concrete and
-diagnostic your evaluation, the better the evolution. Prefer objective metrics
-over LLM opinion where you can get them.
-
----
-
-## Tests
-
-```bash
-pytest tests/ -q          # 197 cases, ~2s
-```
-
-| File | Cases | Covers |
-|---|---|---|
-| `test_framework.py` | 32 | types, config, brain, tools, ReAct parsing, LLM, memory |
-| `test_security.py` | 32 | command injection, path traversal, environment scrubbing |
-| `test_benchmark.py` | 29 | scorers, weighting, gate decisions, noise estimation |
-| `test_parsing.py` | 28 | JSON extraction, apostrophes, parse-failure semantics |
-| `test_patching.py` | 22 | decorators, async, nested, methods, constant replacement |
-| `test_orchestrator.py` | 19 | patch kept / reverted / rejected on regression, retries, scoring |
-
-Several tests exist specifically to pin behaviour that was once broken — most
-importantly `test_patch_that_passes_tests_but_degrades_is_rejected`, which is
-the entire reason the benchmark gate exists. If one blocks you, that is
-information, not an obstacle.
+If the server is unavailable, `retrieve` returns `[]` and `write` returns an
+error dictionary; memory remains optional. The graph server is not bundled;
+bundling a reference implementation is on the [Roadmap](#roadmap).
 
 ---
 
@@ -425,7 +317,7 @@ command that dumps its environment is not a credential disclosure.
 |---|---|
 | `PANDA_WORKSPACE` | Directory file tools are confined to (default: cwd) |
 | `PANDA_ALLOWED_COMMANDS` | Extra commands to permit, space/comma separated |
-| `PANDA_UNSAFE=1` | Disable enforcement entirely — for isolated environments only |
+| `PANDA_UNSAFE=1` | Disable path containment checks — for isolated environments only |
 
 ### What is not
 
@@ -451,7 +343,7 @@ Security reports welcome via GitHub issues.
 
 ## Known Limitations
 
-Stated plainly, because these determine whether the project is useful to you:
+These limitations matter when deciding where to use the project:
 
 ### 🔴 The Improver does not learn from its own history
 
@@ -460,17 +352,17 @@ Every improvement attempt starts from zero. The loop knows that round 3 scored
 outcome of each patch — accepted, rejected, and why — is discarded.
 
 This is the largest remaining gap, and the most interesting one: graph memory
-already exists but only serves the Executor. Feeding patch outcomes into it
-would let the Improver accumulate meta-knowledge about *how to modify this
-codebase*, not just how to do the task. See Roadmap R1.
+already exists for task context and tool access, but patch outcomes are not
+recorded there. Feeding those outcomes into it would let the Improver accumulate
+meta-knowledge about *how to modify this codebase*, not just how to do the task.
+See Roadmap R1.
 
 ### 🟡 The benchmark gate needs a suite to be meaningful
 
 `check_no_regression` is only as good as the tasks you give it. The bundled
 suite in `benchmarks/` is a starting point, not a benchmark — five tasks against
-a toy fixture. A real deployment needs tasks representative of your workload,
-and `estimate_noise` run to set the tolerance from measured variance rather than
-the 2.0 default.
+a toy fixture. A real deployment needs tasks representative of your workload
+and a tolerance chosen for that workload.
 
 ### 🟡 No OS-level sandbox
 
@@ -546,20 +438,43 @@ works out of the box instead of requiring an unbundled service.
 
 ---
 
-## Recent Changes
+## Extending
 
-Work completed against the earlier roadmap, with the evidence that motivated it:
+All three roles are injectable: provide an `Executor`, `Evaluator`, and
+`Improver` for your domain. See `plugins/photo_edit/` for a complete worked
+example.
 
-| Change | Why |
-|---|---|
-| **Regression gate** (`benchmark.py`) | The old gate asked "do tests pass?", not "did the agent improve?". Verified: an agent that merely drops line numbers from search output scores 100 → 89.3 and is now rejected, while passing every unit test. |
-| **libcst patching** (`patching.py`) | The regex replacement failed on decorated, `async`, nested and class-scoped definitions. Worst case, a function body containing the text `\ndef ` truncated the file into a syntax error *before* pytest could catch it. |
-| **Strict evaluation parsing** (`parsing.py`) | A parse failure silently became `score = 50`, so the Improver optimised against noise. Failures now retry once, then report no signal. |
-| **Execution boundaries** (`security.py`) | `shell=True` was verified exploitable: `echo SAFE; echo INJECTED` ran both halves. File tools accepted `..` traversal. |
-| **Improver prompt fix** | `_IMPROVE_PROMPT` contained a literal `{code_here}` that `str.format` treated as a field, so *every* call raised `KeyError` — the core mechanism had never run. Found by writing the first test for it. |
-| **Loop test coverage** | `orchestrator.py` went from zero tests to 19, which is how the prompt bug surfaced. |
+**Evaluator design is where the leverage is.** A vague evaluator produces vague
+`root_cause` strings, which produce useless patches. The more concrete and
+diagnostic your evaluation, the better the evolution. Prefer objective metrics
+over LLM opinion where you can get them.
 
-Test suite: 19 → 197 cases.
+---
+
+## Tests
+
+```bash
+pytest tests/ -q          # 197 pytest cases
+```
+
+| File | Test functions | Covers |
+|---|---|---|
+| `test_framework.py` | 32 | types, config, brain, tools, ReAct parsing, LLM, memory |
+| `test_security.py` | 32 | command injection, path traversal, environment scrubbing |
+| `test_benchmark.py` | 29 | scorers, weighting, gate decisions, noise estimation |
+| `test_parsing.py` | 28 | JSON extraction, apostrophes, parse-failure semantics |
+| `test_patching.py` | 22 | decorators, async, nested, methods, constant replacement |
+| `test_orchestrator.py` | 19 | patch kept / reverted / rejected on regression, retries, scoring |
+
+The table counts test functions; parametrized tests bring the collected total to
+197 cases.
+
+The suite includes regression coverage for behaviour that was once broken,
+notably `test_patch_that_passes_tests_but_degrades_is_rejected`.
+
+---
+
+Recent changes and the reasoning behind them: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -612,4 +527,4 @@ this project distinctive.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT.
