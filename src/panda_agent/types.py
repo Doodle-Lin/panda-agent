@@ -55,6 +55,9 @@ class EvolutionResult:
     final_score: float = 0.0
     total_patches: int = 0
     target_reached: bool = False
+    # Set when the loop rewound the evolvable sources to an earlier, better
+    # scoring state. None means the final on-disk code is the last round's.
+    restored_from_round: int | None = None
 
 
 @dataclass

@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 from .config import Config, load_config
 from .llm import call_llm
+from .parsing import parse_evaluation
+from .patching import replace_definition
 from .react import run_react, ReActResult
 from .tools import TOOLS, execute_tool, get_tool_descriptions
 from .brain import build_system_prompt
@@ -66,6 +68,13 @@ Respond in JSON:
 {{"score": 85, "issues": ["issue1", "issue2"], "root_cause": "...", "suggested_changes": "..."}}
 """
 
+_EVAL_RETRY_SUFFIX = """\
+
+IMPORTANT: your previous response could not be parsed ({error}).
+Respond with ONLY a single JSON object, no prose before or after it.
+The "score" field must be a number between 0 and 100.
+"""
+
 
 class Evaluator:
     """Evaluator: uses LLM to score the execution result."""
@@ -73,7 +82,14 @@ class Evaluator:
     def __init__(self, config: Config):
         self.config = config
 
-    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation:
+    def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation | None:
+        """Score an execution result.
+
+        Returns ``None`` when the model's output could not be parsed after a
+        retry. A caller that receives ``None`` has *no evaluation signal* for
+        this round and must skip improving rather than acting on a guess --
+        see :mod:`panda_agent.parsing` for why a default score is harmful.
+        """
         prompt = _EVAL_PROMPT.format(
             task=task.instruction,
             success=result.success,
@@ -84,22 +100,22 @@ class Evaluator:
             [{"role": "user", "content": prompt}],
             self.config.model,
         )
-        try:
-            # Extract JSON from response
-            m = re.search(r'\{.*\}', response, re.DOTALL)
-            if m:
-                data = json.loads(m.group(0).replace("'", '"'))
-            else:
-                data = {"score": 50, "issues": ["Could not parse evaluation"]}
-        except json.JSONDecodeError:
-            data = {"score": 50, "issues": ["Could not parse evaluation"]}
+        parsed = parse_evaluation(response)
+        if parsed.ok:
+            return parsed.evaluation
 
-        return Evaluation(
-            score=float(data.get("score", 50)),
-            issues=data.get("issues", []),
-            root_cause=data.get("root_cause", ""),
-            suggested_changes=data.get("suggested_changes", ""),
+        # One bounded retry that names the specific failure.
+        retry_prompt = prompt + _EVAL_RETRY_SUFFIX.format(error=parsed.error)
+        response = call_llm(
+            [{"role": "user", "content": retry_prompt}],
+            self.config.model,
         )
+        parsed = parse_evaluation(response)
+        if parsed.ok:
+            return parsed.evaluation
+
+        self.last_error = parsed.error
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +140,7 @@ Output format:
 ```
 PATCH_START
 ```python
-{code_here}
+{{code_here}}
 ```
 PATCH_END
 EXPLANATION: what you changed and why
@@ -192,15 +208,13 @@ def _extract_patch(response: str) -> str:
 
 
 def _replace_function(source: str, new_code: str) -> str:
-    """Replace a function definition in source."""
-    m = re.match(r"def (\w+)\(", new_code)
-    if not m:
-        return source
-    name = m.group(1)
-    pattern = re.compile(rf"^def {name}\(.*?(?=\ndef \w+\(|\Z)", re.DOTALL)
-    if not pattern.search(source):
-        return source
-    return pattern.sub(new_code.rstrip() + "\n\n", source, count=1)
+    """Replace a definition in source, returning source unchanged on failure.
+
+    Backwards-compatible wrapper over :func:`panda_agent.patching.replace_definition`.
+    Prefer that function directly: it reports *why* a patch did not apply,
+    which this signature cannot express.
+    """
+    return replace_definition(source, new_code).source
 
 
 def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tuple[bool, str]:
@@ -232,6 +246,12 @@ class Improver:
         self.config = config
         self.project_root = Path(__file__).parent.parent.parent
         self.test_path = self.project_root / "tests"
+        # Optional regression gate. When set, a patch must also leave benchmark
+        # performance intact -- not merely keep the unit tests green.
+        self.benchmark_gate: Callable[[], Any] | None = None
+        self.baseline: Any | None = None
+        self.tolerance: float = 2.0
+        self.last_reject_reason: str | None = None
 
     def improve(self, evaluation: Evaluation) -> ImprovementResult:
         """Generate and apply patches based on evaluation."""
@@ -299,29 +319,52 @@ class Improver:
             if not patch_code:
                 continue
 
-            patched = _replace_function(source, patch_code)
-            if patched == source:
+            patch_result = replace_definition(source, patch_code)
+            if not patch_result.ok:
+                # Feed the specific reason back so the next attempt is informed
+                # rather than a blind retry. Nothing was written to disk.
+                last_test_output = f"Patch could not be applied: {patch_result.error}"
                 continue
 
-            source_path.write_text(patched, encoding="utf-8")
+            source_path.write_text(patch_result.source, encoding="utf-8")
 
             # Run tests
             passed, test_output = _run_pytest(self.test_path, self.project_root)
 
-            if passed:
-                backup_path.unlink(missing_ok=True)
-                return ImprovementResult(
-                    patched=True,
-                    tests_passed=True,
-                    diff=f"Patched {source_path.name}",
-                    explanation=_extract_explanation(response),
-                    test_output=test_output,
-                    attempts=attempt,
-                )
-            else:
+            if not passed:
                 shutil.copy2(backup_path, source_path)
                 source = source_path.read_text(encoding="utf-8")
                 last_test_output = test_output
+                continue
+
+            # Second gate: unit tests passing only means the code is not
+            # broken. Confirm the agent's measured behaviour did not degrade
+            # before keeping the patch.
+            gate_note = ""
+            if self.benchmark_gate is not None and self.baseline is not None:
+                from .benchmark import check_no_regression
+
+                after = self.benchmark_gate()
+                gate = check_no_regression(self.baseline, after, self.tolerance)
+                if not gate.accepted:
+                    self.last_reject_reason = gate.reason
+                    shutil.copy2(backup_path, source_path)
+                    source = source_path.read_text(encoding="utf-8")
+                    last_test_output = (
+                        f"Unit tests passed but benchmark regressed: {gate.reason}"
+                    )
+                    continue
+                gate_note = f" | benchmark {gate.delta:+.1f}"
+
+            backup_path.unlink(missing_ok=True)
+            return ImprovementResult(
+                patched=True,
+                tests_passed=True,
+                diff=f"Patched {source_path.name}{gate_note}",
+                explanation=_extract_explanation(response),
+                test_output=test_output,
+                attempts=attempt,
+            )
 
         # All failed — restore
         if backup_path.exists():
@@ -365,6 +408,9 @@ def run_evolution(
     result = EvolutionResult()
     best_score = 0.0
     total_patches = 0
+    best_round: int | None = None
+    snapshots: dict[int, dict[Path, str]] = {}
+    evolvable = [p for p in (_TOOLS_PATH, _BRAIN_PATH) if p.exists()]
 
     def _emit(et, msg, rnd, data=None):
         if on_event:
@@ -372,6 +418,12 @@ def run_evolution(
 
     for round_num in range(1, max_rounds + 1):
         round_result = RoundResult(round_num=round_num)
+
+        # Snapshot the evolvable sources *before* this round's patch, so the
+        # best-performing code state can be restored at the end.
+        snapshots[round_num] = {
+            p: p.read_text(encoding="utf-8") for p in evolvable
+        }
 
         # Execute
         _emit("executor_start", "Running task...", round_num)
@@ -382,11 +434,20 @@ def run_evolution(
         # Evaluate
         _emit("evaluator_start", "Evaluating...", round_num)
         evaluation = evaluator.evaluate(task, exec_result)
+        if evaluation is None:
+            # No usable signal this round. Improving on a fabricated score
+            # would optimise against noise, so skip straight to the next round.
+            reason = getattr(evaluator, "last_error", "unparseable evaluation")
+            _emit("evaluator_error", f"No evaluation signal: {reason}", round_num)
+            result.rounds.append(round_result)
+            continue
+
         round_result.evaluation = evaluation
         _emit("evaluator_done", f"Score: {evaluation.score:.0f}/100", round_num)
 
         if evaluation.score > best_score:
             best_score = evaluation.score
+            best_round = round_num
 
         if evaluation.score >= target_score:
             _emit("target_reached", f"Target {target_score} reached", round_num)
@@ -410,6 +471,22 @@ def run_evolution(
             _emit("improver_skip", "Last round", round_num)
 
         result.rounds.append(round_result)
+
+    # The scored code state is the one snapshotted at the *start* of the best
+    # round. Without this restore, run_evolution reports best_score while
+    # leaving whatever the final patch produced on disk -- so the number it
+    # returns describes code the caller never receives.
+    if best_round is not None and snapshots.get(best_round):
+        current = {p: p.read_text(encoding="utf-8") for p in evolvable}
+        if current != snapshots[best_round]:
+            for path, content in snapshots[best_round].items():
+                path.write_text(content, encoding="utf-8")
+            _emit(
+                "restored_best",
+                f"Restored code from round {best_round} (score {best_score:.0f})",
+                max_rounds,
+            )
+            result.restored_from_round = best_round
 
     result.final_score = best_score
     result.total_patches = total_patches
