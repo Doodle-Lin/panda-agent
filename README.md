@@ -4,7 +4,10 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-197%20passing-brightgreen.svg)](#tests)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
+
+**English** · [简体中文](README.zh-CN.md)
 
 Most "self-improving agent" projects let an LLM patch its own source and call it
 evolution. The hard part isn't generating the patch — it's **knowing whether the
@@ -362,6 +365,28 @@ See `plugins/photo_edit/` for a complete worked example.
 `root_cause` strings, which produce useless patches. The more concrete and
 diagnostic your evaluation, the better the evolution. Prefer objective metrics
 over LLM opinion where you can get them.
+
+---
+
+## Tests
+
+```bash
+pytest tests/ -q          # 197 cases, ~2s
+```
+
+| File | Cases | Covers |
+|---|---|---|
+| `test_framework.py` | 32 | types, config, brain, tools, ReAct parsing, LLM, memory |
+| `test_security.py` | 32 | command injection, path traversal, environment scrubbing |
+| `test_benchmark.py` | 29 | scorers, weighting, gate decisions, noise estimation |
+| `test_parsing.py` | 28 | JSON extraction, apostrophes, parse-failure semantics |
+| `test_patching.py` | 22 | decorators, async, nested, methods, constant replacement |
+| `test_orchestrator.py` | 19 | patch kept / reverted / rejected on regression, retries, scoring |
+
+Several tests exist specifically to pin behaviour that was once broken — most
+importantly `test_patch_that_passes_tests_but_degrades_is_rejected`, which is
+the entire reason the benchmark gate exists. If one blocks you, that is
+information, not an obstacle.
 
 ---
 
