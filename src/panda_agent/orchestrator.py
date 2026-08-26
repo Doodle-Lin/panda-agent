@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -221,7 +222,13 @@ def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tupl
     """Run pytest and return (passed, output_tail)."""
     try:
         result = subprocess.run(
-            ["python", "-m", "pytest", str(test_path), "-x", "-q", "--tb=short"],
+            # sys.executable, not "python": a bare name resolves through PATH to
+            # whatever interpreter happens to be first, which is routinely not the
+            # one running this process. When it lands outside the active venv the
+            # project's own dependencies are missing, pytest fails on import, and
+            # the gate reads that as "this patch broke the tests" -- silently
+            # reverting every patch, including the good ones.
+            [sys.executable, "-m", "pytest", str(test_path), "-x", "-q", "--tb=short"],
             cwd=str(project_root),
             capture_output=True,
             text=True,

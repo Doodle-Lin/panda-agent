@@ -108,6 +108,42 @@ def config():
 # ---------------------------------------------------------------------------
 
 class TestImproverGates:
+    def test_pytest_runs_under_the_current_interpreter(self, monkeypatch, tmp_path):
+        """The gate must not shell out to a bare 'python'.
+
+        A bare name resolves through PATH, which routinely lands on a different
+        interpreter than the one running the loop (a system or conda python
+        rather than the active venv). There the project's dependencies are
+        absent, pytest fails at import, and the gate reads that as "the patch
+        broke the tests" -- so every patch gets reverted, including good ones.
+        Verified in the wild: bare 'python' resolved to an Anaconda install
+        with no libcst, turning a passing suite into 5 import failures.
+        """
+        import sys as _sys
+
+        from panda_agent import orchestrator as orch
+
+        captured: dict = {}
+
+        class _Result:
+            returncode = 0
+            stdout = "1 passed"
+            stderr = ""
+
+        def fake_run(argv, **kwargs):
+            captured["argv"] = argv
+            return _Result()
+
+        monkeypatch.setattr(orch.subprocess, "run", fake_run)
+        orch._run_pytest(tmp_path, tmp_path)
+
+        argv = captured["argv"]
+        assert argv[0] == _sys.executable, (
+            f"gate invoked {argv[0]!r} instead of sys.executable; a bare "
+            "interpreter name can resolve outside the active environment"
+        )
+        assert argv[1:3] == ["-m", "pytest"]
+
     def test_improve_prompt_formats_without_keyerror(self, sandbox, config):
         """Regression: the prompt template contained a literal ``{code_here}``
         placeholder that ``str.format`` tried to substitute, so every call to
