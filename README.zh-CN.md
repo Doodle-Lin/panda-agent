@@ -1,12 +1,14 @@
 # 🐼 PandaAgent
 
-**让 LLM 用工具完成任务，再通过实测循环改进这些工具和决策逻辑。** 补丁通过测试门禁后才会保留；配置 benchmark 门禁时，还必须证明任务表现没有退化。
+**一个会重写自己的工具来把你的任务做得更好的 Agent —— 而且只保留真正带来提升的那次重写。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-197%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-198%20passing-brightgreen.svg)](#测试)
 
 [English](README.md) · **简体中文**
+
+给它一个任务。它会执行任务、给自己打分、找出是什么限制了自己、重写自己的那一部分，然后重跑一遍，检查这次重写是不是真的有用。没用就回滚。
 
 ```
                     ┌─────────────────────────────────────┐
@@ -56,7 +58,7 @@
 | 进化历史 → 记忆 | 🔴 未做 | Improver 不会从历史补丁的成败中学习 |
 | 操作系统级沙箱 | 🟡 部分 | 有白名单和路径边界，但无内核隔离。见[安全](#安全) |
 
-**测试：197 个 pytest 用例**，覆盖解析、补丁、benchmark、orchestrator 和安全边界。
+**测试：198 个 pytest 用例**，覆盖解析、补丁、benchmark、orchestrator 和安全边界。
 
 跑在你在意的东西上之前，请先读[已知限制](#已知限制)。
 
@@ -369,7 +371,7 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 ## 测试
 
 ```bash
-pytest tests/ -q          # 197 个 pytest 用例
+pytest tests/ -q          # 198 个 pytest 用例
 ```
 
 | 文件 | 测试函数数 | 覆盖 |
@@ -379,9 +381,9 @@ pytest tests/ -q          # 197 个 pytest 用例
 | `test_benchmark.py` | 29 | 打分器、加权、门禁决策、噪声估计 |
 | `test_parsing.py` | 28 | JSON 提取、撇号处理、解析失败语义 |
 | `test_patching.py` | 22 | 装饰器、async、嵌套、类方法、常量替换 |
-| `test_orchestrator.py` | 19 | 补丁保留/回滚/因退化被拒、Evaluator 重试、循环计分 |
+| `test_orchestrator.py` | 20 | 补丁保留/回滚/因退化被拒、Evaluator 重试、循环计分 |
 
-表中统计的是测试函数；参数化测试展开后，pytest 收集到的用例总数是 197。
+表中统计的是测试函数；参数化测试展开后，pytest 收集到的用例总数是 198。
 
 测试套件也覆盖曾经出过问题的行为，尤其是 `test_patch_that_passes_tests_but_degrades_is_rejected`。
 

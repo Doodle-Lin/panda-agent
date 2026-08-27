@@ -1,13 +1,18 @@
 # 🐼 PandaAgent
 
-**Give an LLM tools to complete a task, then improve those tools and its decision logic through a measured loop.** Patches are kept when the test gate passes and, when configured, a benchmark gate shows no regression.
+**An agent that rewrites its own tools to get better at your task — and only
+keeps a rewrite that measurably helped.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-197%20passing-brightgreen.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-198%20passing-brightgreen.svg)](#tests)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 **English** · [简体中文](README.zh-CN.md)
+
+Point it at a task. It runs the task, scores how it did, finds what limited it,
+rewrites that part of itself, and re-runs to check the rewrite actually helped.
+If it didn't, the change is reverted.
 
 ```
                     ┌─────────────────────────────────────┐
@@ -59,7 +64,7 @@ verification gate before it's kept.
 | Evolution history → memory | 🔴 Not built | Improver does not learn from past patch outcomes |
 | OS-level sandbox | 🟡 Partial | Allowlist + path containment, but no kernel isolation. See [Security](#security) |
 
-**Test suite: 197 pytest cases** across parsing, patching, benchmarking, the
+**Test suite: 198 pytest cases** across parsing, patching, benchmarking, the
 orchestrator, and the security boundary.
 
 Read [Known Limitations](#known-limitations) before running this on anything
@@ -454,7 +459,7 @@ over LLM opinion where you can get them.
 ## Tests
 
 ```bash
-pytest tests/ -q          # 197 pytest cases
+pytest tests/ -q          # 198 pytest cases
 ```
 
 | File | Test functions | Covers |
@@ -464,10 +469,10 @@ pytest tests/ -q          # 197 pytest cases
 | `test_benchmark.py` | 29 | scorers, weighting, gate decisions, noise estimation |
 | `test_parsing.py` | 28 | JSON extraction, apostrophes, parse-failure semantics |
 | `test_patching.py` | 22 | decorators, async, nested, methods, constant replacement |
-| `test_orchestrator.py` | 19 | patch kept / reverted / rejected on regression, retries, scoring |
+| `test_orchestrator.py` | 20 | patch kept / reverted / rejected on regression, retries, scoring |
 
 The table counts test functions; parametrized tests bring the collected total to
-197 cases.
+198 cases.
 
 The suite includes regression coverage for behaviour that was once broken,
 notably `test_patch_that_passes_tests_but_degrades_is_rejected`.
@@ -487,7 +492,7 @@ between a demo and a tool.
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent
 pip install -e ".[test]"
-pytest tests/          # 197 cases, ~2s
+pytest tests/          # 198 cases, ~2s
 ```
 
 Guidelines:
