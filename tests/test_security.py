@@ -58,7 +58,9 @@ class TestCommandInjection:
         assert "hello" in out
 
     def test_command_with_arguments_works(self):
-        out = execute_tool("run_command", {"command": "python3 --version"})
+        # Use "python" (not "python3") — it's on the allowlist and resolves
+        # to the current interpreter on all platforms.
+        out = execute_tool("run_command", {"command": "python --version"})
         assert "Python" in out
 
     def test_quoted_argument_is_preserved(self):
@@ -126,7 +128,10 @@ class TestPathTraversal:
     def test_symlink_escape_is_rejected(self, tmp_path):
         outside = tmp_path.parent / "outside_target"
         outside.mkdir(exist_ok=True)
-        (tmp_path / "link").symlink_to(outside)
+        try:
+            (tmp_path / "link").symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks require admin privileges on Windows")
         with pytest.raises(SecurityError, match="escapes the workspace"):
             resolve_path("link/secret.txt", root=tmp_path)
 
