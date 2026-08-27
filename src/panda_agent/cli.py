@@ -264,6 +264,9 @@ def main():
     # tools
     sub.add_parser("tools", help="List available tools")
 
+    # history
+    hist = sub.add_parser("history", help="View evolution history")
+
     args = parser.parse_args()
 
     # Default to chat if no command
@@ -280,6 +283,8 @@ def main():
         cmd_evolve(args)
     elif args.command == "memory":
         cmd_memory(args)
+    elif args.command == "history":
+        cmd_history(args)
     elif args.command == "tools":
         cmd_tools()
 
@@ -560,6 +565,36 @@ def cmd_tools():
     """Handle tools command."""
     print("Available tools:")
     print(get_tool_descriptions())
+
+
+def cmd_history(args):
+    """Handle history command — view evolution audit trail."""
+    import json
+    panda_home = os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))
+    history_file = os.path.join(panda_home, "evolution_history.jsonl")
+
+    if not os.path.exists(history_file):
+        print("No evolution history found. Run 'panda evolve -t <task>' first.")
+        return
+
+    print(f"{'Round':>5}  {'Score':>5}  {'Bench':>6}  {'Patched':>12}  {'Status':>8}  Reason")
+    print("-" * 80)
+
+    with open(history_file, encoding="utf-8") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+                rnd = entry.get("round", "?")
+                score = entry.get("score", 0)
+                bench_delta = entry.get("benchmark_delta", "")
+                patched = entry.get("patched_file", "-")
+                status = entry.get("accepted", False)
+                status_str = "kept" if status else "reject"
+                reason = entry.get("reason", "")[:40]
+                bench_str = f"{bench_delta:+.1f}" if isinstance(bench_delta, (int, float)) else str(bench_delta)
+                print(f"{rnd:>5}  {score:>5.0f}  {bench_str:>6}  {patched:>12}  {status_str:>8}  {reason}")
+            except (json.JSONDecodeError, KeyError):
+                continue
 
 
 if __name__ == "__main__":
