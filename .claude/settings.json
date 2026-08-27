@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git pull *)",
+      "Bash(awk 'NR>=501 && NR<=580' src/panda_agent/orchestrator.py)",
+      "Read(//tmp/**)",
+      "Bash(python)",
+      "Bash(cp /tmp/check.txt *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/panda_agent/orchestrator.py',encoding='utf-8'\\).read\\(\\)\\); print\\('orchestrator ok'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/panda_agent/tools.py',encoding='utf-8'\\).read\\(\\)\\); print\\('tools ok'\\)\")",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(pip install *)",
+      "Bash(sleep 30 && tail -80 /c/Users/<username>/AppData/Local/Temp/claude/e--workspace-evo-agent/4c7f22e5-871e-42a1-b7fe-437e6587e363/tasks/bsvjauois.output)",
+      "Read(//c/Users/<username>/AppData/Local/Temp/claude/e--workspace-evo-agent/4c7f22e5-871e-42a1-b7fe-437e6587e363/tasks/**)",
+      "Bash(python -m pytest tests/test_orchestrator.py::TestImproverGates::test_good_patch_is_kept_and_backup_removed -x)",
+      "Bash(python -c \"from panda_agent.orchestrator import Improver; import inspect; print\\(inspect.getsource\\(Improver._improve_file\\)\\)\")",
+      "Bash(git show *)",
+      "Bash(awk '/^class Improver:/{flag=1} flag{print} /^def run_evolution/{exit}' /tmp/remote_orch.py)",
+      "Bash(awk 'NR>=1 && /^class Improver:/{flag=1} flag{print} /^def _extract_explanation/{exit}' /tmp/remote_improver.txt)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/panda_agent/orchestrator.py',encoding='utf-8'\\).read\\(\\)\\); print\\('ok'\\)\")",
+      "Bash(python -m pytest tests/test_orchestrator.py -q)",
+      "Bash(python -m pytest tests/ -q --ignore=tests/test_e2e_evolution.py)",
+      "Bash(python -m pytest tests/test_evolution.py::TestRunEvolution::test_run_evolution_stops_on_target tests/test_evolution.py::TestRunEvolution::test_run_evolution_stops_on_stale -x)"
+    ],
+    "additionalDirectories": [
+      "e:\\tmp"
+    ]
+  }
+}
