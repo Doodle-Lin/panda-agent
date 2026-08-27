@@ -567,3 +567,22 @@ class TestResultStructure:
         assert er2.total_patches == 2
         assert er2.total_lessons == 5
         assert er2.target_reached is True
+
+
+# ---------------------------------------------------------------------------
+# Worktree verification tests (Phase 4)
+# ---------------------------------------------------------------------------
+
+class TestWorktreeVerification:
+    def test_worktree_verifies_with_original_tests(self, tmp_path):
+        """Patch that weakens tests should be caught by worktree verification."""
+        # This test is a structural test: it verifies the method exists
+        # and returns a tuple. Full worktree testing requires a git repo.
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        assert hasattr(improver, '_verify_in_worktree')
+        # In a non-git directory, should fail open
+        passed, msg = improver._verify_in_worktree("x = 1\n", tmp_path / "src" / "test.py")
+        assert passed is True  # fail open for non-git

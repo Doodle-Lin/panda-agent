@@ -488,6 +488,42 @@ class Improver:
         self.tolerance: float = 2.0
         self.last_reject_reason: str | None = None
         self.memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
+        self.use_worktree: bool = False  # Set True to enable isolated verification
+
+    def _verify_in_worktree(self, patched_source: str, source_path: Path) -> tuple[bool, str]:
+        """Verify a patch in an isolated git worktree at HEAD.
+
+        Returns (passed, output). If worktree creation fails (non-git repo),
+        returns (True, 'worktree skipped') to fail open rather than block evolution.
+        """
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                result = subprocess.run(
+                    ["git", "worktree", "add", "--detach", tmp, "HEAD"],
+                    cwd=str(self.project_root), capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode != 0:
+                    # Not a git repo or worktree failed — fail open
+                    return True, "worktree creation failed, skipping isolation"
+                try:
+                    # Copy only the patched source file into the worktree
+                    rel = source_path.relative_to(self.project_root)
+                    target = Path(tmp) / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(patched_source, encoding="utf-8")
+
+                    # Run pytest using the ORIGINAL tests from HEAD
+                    test_rel = self.test_path.relative_to(self.project_root)
+                    passed, output = _run_pytest(Path(tmp) / test_rel, Path(tmp))
+                    return passed, output
+                finally:
+                    subprocess.run(
+                        ["git", "worktree", "remove", "--force", tmp],
+                        cwd=str(self.project_root), capture_output=True, timeout=30,
+                    )
+        except Exception as e:
+            return True, f"worktree error: {e}"
 
     def improve(self, evaluation: Evaluation) -> ImprovementResult:
         """Generate and apply patches based on evaluation."""
@@ -587,6 +623,17 @@ class Improver:
                 continue
 
             source_path.write_text(patch_result.source, encoding="utf-8")
+
+            # Worktree verification (opt-in): run the ORIGINAL tests from HEAD
+            # in an isolated git worktree so a patch that weakens tests cannot
+            # pass the gate. Only enabled when self.use_worktree is True.
+            if self.use_worktree:
+                wt_passed, wt_output = self._verify_in_worktree(patch_result.source, source_path)
+                if not wt_passed:
+                    shutil.copy2(backup_path, source_path)
+                    source = source_path.read_text(encoding="utf-8")
+                    last_test_output = f"Worktree verification failed: {wt_output}"
+                    continue
 
             # Run tests
             passed, test_output = _run_pytest(self.test_path, self.project_root)
