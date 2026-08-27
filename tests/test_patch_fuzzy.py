@@ -22,10 +22,14 @@ class TestPatchFileFuzzy:
     """patch_file should tolerate minor whitespace differences."""
 
     def _write_temp(self, content):
-        f = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
-        f.write(content)
-        f.close()
-        return f.name
+        import tempfile as _tf, os as _os
+        d = _tf.mkdtemp()
+        # Set PANDA_WORKSPACE so safe_path allows the temp dir
+        _os.environ["PANDA_WORKSPACE"] = d
+        f = _os.path.join(d, "test_file.py")
+        with open(f, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        return f
 
     def test_exact_match(self):
         """Exact match should work (baseline)."""
@@ -62,13 +66,16 @@ class TestPatchFileFuzzy:
 
     def test_line_ending_normalization(self):
         """CRLF in content should match LF in old_string."""
-        path = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8', newline='')
-        path.write("def hello():\r\n    return 'world'\r\n")
-        path.close()
+        import os as _os, tempfile as _tf
+        d = _tf.mkdtemp()
+        _os.environ["PANDA_WORKSPACE"] = d
+        path = _os.path.join(d, "test_crlf.py")
+        with open(path, "wb") as f:
+            f.write(b"def hello():\r\n    return 'world'\r\n")
         # old_string uses LF, content uses CRLF
-        result = _tool_patch_file(path.name, "return 'world'", "return 'hello'")
+        result = _tool_patch_file(path, "return 'world'", "return 'hello'")
         assert "Patched" in result, f"Should normalize line endings. Got: {result}"
-        os.unlink(path.name)
+        _os.unlink(path)
 
     def test_still_fails_on_genuine_mismatch(self):
         """Genuinely different content should still fail."""
