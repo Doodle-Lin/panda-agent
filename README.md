@@ -74,12 +74,21 @@ you care about.
 
 ## Why This Exists
 
-A passing unit-test suite shows that the code still works; it does not measure
-whether an agent still performs its task well. With a configured baseline and
-gate, `benchmark.py` scores a task suite before and after a patch, and
-`check_no_regression` rejects an incomplete result or a weighted score drop
-beyond the configured tolerance. Without a configured suite, the unit-test gate
-is the only automatic check.
+Let an LLM edit its own source and you will get a patch. It will look
+reasonable. The hard question is the one nobody answers: did it help?
+
+"The tests still pass" doesn't answer it. Tests tell you the code isn't
+*broken* — an agent can pass every test and still have gotten worse at the job.
+A patch that drops line numbers from search results is perfectly valid Python
+and quietly makes the agent worse at citing sources.
+
+So this project keeps a set of tasks with known-good answers and runs them
+before and after every patch. Score dropped? The patch goes back. That's the
+whole idea — the difference between an agent that rewrites itself and one that
+*improves* itself.
+
+Give it no task suite and you're back to the tests-only gate, same as everyone
+else.
 
 ---
 
@@ -144,7 +153,7 @@ panda evolve -t "search the codebase for TODO comments and summarize them" \
     --rounds 3
 ```
 
-After the loop, `cmd_evolve` prints one summary line in this form:
+When the loop finishes you get one summary line:
 
 ```text
 Rounds: {n}, Score: {score}, Patches: {n}
@@ -364,7 +373,7 @@ See Roadmap R1.
 
 ### 🟡 The benchmark gate needs a suite to be meaningful
 
-`check_no_regression` is only as good as the tasks you give it. The bundled
+The gate is only as good as the tasks you give it. The bundled
 suite in `benchmarks/` is a starting point, not a benchmark — five tasks against
 a toy fixture. A real deployment needs tasks representative of your workload
 and a tolerance chosen for that workload.
