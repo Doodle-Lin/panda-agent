@@ -11,10 +11,17 @@ import os
 from pathlib import Path
 from typing import Any
 
-# Add graph_memory to import path
-_GRAPH_MEMORY_DIR = Path(r"${PANDA_HOME}/graph_memory")
-if str(_GRAPH_MEMORY_DIR) not in sys.path:
-    sys.path.insert(0, str(_GRAPH_MEMORY_DIR))
+# Add graph_memory to import path — search multiple locations, not just one hardcoded path
+_GRAPH_MEMORY_CANDIDATES = [
+    Path(os.environ.get("PANDA_GRAPH_MEMORY_DIR", "")),
+    Path(os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))) / "graph_memory",
+    Path(os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))) / "memory" / "graph_memory",
+    # Development path (remove for public release)
+    Path(r"${PANDA_HOME}/graph_memory"),
+]
+for _candidate in _GRAPH_MEMORY_CANDIDATES:
+    if _candidate.exists() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
 
 
 class EmbeddedMemory:

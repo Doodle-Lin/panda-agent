@@ -487,6 +487,7 @@ class Improver:
         self.baseline: Any | None = None
         self.tolerance: float = 2.0
         self.last_reject_reason: str | None = None
+        self.memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
 
     def improve(self, evaluation: Evaluation) -> ImprovementResult:
         """Generate and apply patches based on evaluation."""
@@ -529,6 +530,29 @@ class Improver:
             source_code=relevant,
             target_file=source_path.name,
         )
+
+        history_context = ""
+        if self.memory and hasattr(self.memory, 'retrieve'):
+            try:
+                results = self.memory.retrieve(
+                    f"{evaluation.root_cause} {' '.join(evaluation.issues)}",
+                    top_k=3,
+                )
+                if results:
+                    accepted = [r for r in results if 'accepted' in r.get('title', '').lower()]
+                    rejected = [r for r in results if 'rejected' in r.get('title', '').lower()]
+                    if accepted or rejected:
+                        lines = ["## Past Patch History (from memory)"]
+                        for r in accepted[:2]:
+                            lines.append(f"  ACCEPTED: {r.get('content', '')[:200]}")
+                        for r in rejected[:2]:
+                            lines.append(f"  REJECTED: {r.get('content', '')[:200]}")
+                        history_context = "\n".join(lines)
+            except Exception:
+                pass
+
+        if history_context:
+            prompt = prompt + "\n\n" + history_context
 
         max_retries = self.config.agent.max_retries
         last_test_output = ""
@@ -593,6 +617,25 @@ class Improver:
                 gate_note = f" | benchmark {gate.delta:+.1f}"
 
             backup_path.unlink(missing_ok=True)
+
+            if self.memory and hasattr(self.memory, 'write'):
+                try:
+                    score_delta = evaluation.score
+                    explanation = _extract_explanation(response)
+                    self.memory.write(
+                        content=(
+                            f"Patch accepted: {source_path.name}\n"
+                            f"Root cause: {evaluation.root_cause}\n"
+                            f"Score delta: +{score_delta}\n"
+                            f"Explanation: {explanation}\n"
+                        ),
+                        title=f"patch_accepted: {source_path.name}",
+                        node_type="reference",
+                        source="panda_improver",
+                    )
+                except Exception:
+                    pass
+
             return ImprovementResult(
                 patched=True,
                 tests_passed=True,
@@ -606,6 +649,21 @@ class Improver:
         if backup_path.exists():
             shutil.copy2(backup_path, source_path)
             backup_path.unlink(missing_ok=True)
+
+        if self.memory and hasattr(self.memory, 'write'):
+            try:
+                self.memory.write(
+                    content=(
+                        f"Patch rejected: {source_path.name}\n"
+                        f"Root cause: {evaluation.root_cause}\n"
+                        f"Reject reason: {last_test_output}\n"
+                    ),
+                    title=f"patch_rejected: {source_path.name}",
+                    node_type="reference",
+                    source="panda_improver",
+                )
+            except Exception:
+                pass
 
         return ImprovementResult(
             patched=False,
