@@ -1,19 +1,45 @@
+# PandaAgent — temporary files and build artifacts
+
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
 *.egg-info/
 dist/
 build/
+*.egg
+
+# Virtual environments
 .venv/
+venv/
+env/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Env
-.env
-*.bak
+# Claude Code
+.claude/
 
-# Test output
-self_improve_output/
-*_result.json
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary scripts (not part of the project)
+note.txt
+test.txt
+_check.py
+_*.py
+
+# Panda home directory (local dev)
+.panda/

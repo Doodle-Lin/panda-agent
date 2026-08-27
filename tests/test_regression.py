@@ -28,7 +28,7 @@ from panda_agent.types import (
     Task, ExecutionResult, Evaluation, ExecutionTrace, TurnRecord,
 )
 from panda_agent.orchestrator import (
-    _extract_patch, _replace_function, _try_fix_syntax,
+    _extract_patch, _replace_function,
     Evaluator, Learner, Improver,
 )
 
@@ -238,19 +238,22 @@ class TestRegressionBehavioralCheck:
 
 class TestRegressionEvaluatorJson:
     def test_regression_evaluator_json_in_code_block(self):
-        """Evaluator should parse JSON wrapped in ```json ... ```."""
-        eval = Evaluator(_mock_config())
+        """Evaluator should parse JSON wrapped in ```json ... ```.
+        Uses parse_evaluation from parsing.py (not the old _parse_eval_json)."""
+        from panda_agent.parsing import parse_evaluation
         response = '```json\n{"score": 85, "issues": ["test"]}\n```'
-        data = eval._parse_eval_json(response)
-        assert data["score"] == 85
-        assert "test" in data["issues"]
+        result = parse_evaluation(response)
+        assert result.ok
+        assert result.evaluation.score == 85
+        assert "test" in result.evaluation.issues
 
     def test_regression_evaluator_json_raw(self):
         """Evaluator should parse raw JSON."""
-        eval = Evaluator(_mock_config())
+        from panda_agent.parsing import parse_evaluation
         response = '{"score": 70, "issues": [], "root_cause": "", "suggested_changes": ""}'
-        data = eval._parse_eval_json(response)
-        assert data["score"] == 70
+        result = parse_evaluation(response)
+        assert result.ok
+        assert result.evaluation.score == 70
 
 
 # ===========================================================================
@@ -328,70 +331,13 @@ class TestRegressionAutoWriteMemory:
 
 # ===========================================================================
 # Bug 13: Chinese quotes in LLM-generated code
-# Fixed: _try_fix_syntax replaces \u201c \u201d with ASCII quotes
+# Removed: _try_fix_syntax no longer exists (libcst validates before writing)
 # ===========================================================================
-
-class TestRegressionChineseQuotes:
-    def test_regression_chinese_quotes_fix(self):
-        """_try_fix_syntax should replace Chinese quotes with ASCII."""
-        code = 'x = \u201chello\u201d'  # Chinese double quotes
-        # Simulate a SyntaxError
-        try:
-            compile(code, "<test>", "exec")
-            err = None
-        except SyntaxError as e:
-            err = e
-
-        if err:
-            fixed = _try_fix_syntax(code, err)
-            if fixed:
-                # Should have ASCII quotes now
-                assert '"' in fixed
-                assert '\u201c' not in fixed
-                assert '\u201d' not in fixed
-
-    def test_regression_chinese_single_quotes_fix(self):
-        """Chinese single quotes should also be fixed."""
-        code = "x = \u2018hello\u2019"
-        try:
-            compile(code, "<test>", "exec")
-            err = None
-        except SyntaxError as e:
-            err = e
-
-        if err:
-            fixed = _try_fix_syntax(code, err)
-            if fixed:
-                assert "'" in fixed
-                assert '\u2018' not in fixed
-                assert '\u2019' not in fixed
-
 
 # ===========================================================================
 # Bug 14: Unterminated string literal in LLM-generated code
-# Fixed: _try_fix_syntax adds closing quote
+# Removed: _try_fix_syntax no longer exists (libcst validates before writing)
 # ===========================================================================
-
-class TestRegressionUnterminatedString:
-    def test_regression_unterminated_string_fix(self):
-        """_try_fix_syntax should add closing quote for unterminated string."""
-        code = 'x = "hello world\npass'
-        try:
-            compile(code, "<test>", "exec")
-            err = None
-        except SyntaxError as e:
-            err = e
-
-        if err and "unterminated" in str(err).lower():
-            fixed = _try_fix_syntax(code, err)
-            if fixed:
-                # Should compile now
-                try:
-                    compile(fixed, "<test>", "exec")
-                    assert True
-                except SyntaxError:
-                    # May not always fix, but should attempt
-                    pass
 
 
 # ===========================================================================

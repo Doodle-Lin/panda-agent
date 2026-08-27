@@ -7,6 +7,7 @@ the agent's "hands" but also its "mind".
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -333,234 +334,6 @@ class Learner:
 
 # ---------------------------------------------------------------------------
 # Improver — Level 3: structural evolution (patch source code)
-# ---------------------------------------------------------------------------
-
-_IMPROVE_PROMPT = """\
-You are a code improvement agent. Fix bugs and improve quality based on \
-an evaluation report and accumulated evidence.
-
-## Evaluation
-{evaluation_json}
-
-## Evidence (from Learner)
-{evidence}
-
-## Current Source Code (relevant functions)
-```python
-{source_code}
-```
-
-## Target File: {target_file}
-
-## CRITICAL CONSTRAINTS — read carefully
-1. Do NOT change function signatures (parameter names, order, defaults). \
-   Existing tests call these functions with exact argument names.
-2. Do NOT change return types or formats. Tests assert specific return values.
-3. Do NOT remove or rename any existing function.
-4. Keep all existing behavior intact -- only ADD or FIX, do not BREAK.
-5. If you add a new function, also register it if needed (for tools.py).
-
-## Instructions
-Output ONLY the function(s) you want to replace. Each function must be a \
-complete, valid Python function starting with `def function_name(`.
-The function signature MUST match the original exactly.
-Do NOT include module-level docstrings, imports, or constants unless \
-you are also replacing them.
-
-Output format:
-```
-PATCH_START
-```python
-def function_name(args):
-    # your implementation
-    ...
-```
-PATCH_END
-EXPLANATION: what you changed and why
-```
-
-If no fix needed, output NO_CHANGE.
-"""
-
-_RETRY_PROMPT = """\
-Previous patch failed tests:
-{test_error}
-
-Fix and regenerate. Same output format.
-"""
-
-_TOOLS_PATH = Path(__file__).parent / "tools.py"
-_BRAIN_PATH = Path(__file__).parent / "brain.py"
-
-
-def _extract_relevant(source: str, eval_data: Evaluation, keywords: list[str]) -> str:
-    """Extract relevant functions from source based on evaluation issues."""
-    search_text = " ".join(eval_data.issues + [eval_data.root_cause, eval_data.suggested_changes]).lower()
-    func_defs = list(re.finditer(r"^def (\w+\()", source, re.MULTILINE))
-    if not func_defs:
-        return source[:5000]
-
-    relevant = set()
-    for m in func_defs:
-        name = m.group(1)
-        if name.lower() in search_text:
-            relevant.add(name)
-
-    for kw in keywords:
-        if kw.lower() in search_text:
-            for m in func_defs:
-                name = m.group(1)
-                if kw.lower() in name.lower():
-                    relevant.add(name)
-
-    if not relevant:
-        lines = []
-        for m in func_defs:
-            name = m.group(1)
-            end = m.end() + 200
-            lines.append(source[m.start():end])
-        return "\n...\n".join(lines) if lines else source[:3000]
-
-    results = []
-    for m in func_defs:
-        name = m.group(1)
-        if name not in relevant:
-            continue
-        start = m.start()
-        remaining = source[start:]
-        next_def = re.search(r"\ndef \w+\(", remaining[1:])
-        end = next_def.start() + 1 if next_def else len(remaining)
-        results.append(remaining[:end].rstrip())
-
-    return "\n\n".join(results) if results else source[:3000]
-
-
-def _extract_patch(response: str) -> str:
-    """Extract patched code from LLM response. Supports multiple formats."""
-    # Format 1: PATCH_START with python code fence
-    m = re.search(r"PATCH_START\s*```python\n(.*?)```", response, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    # Format 2: PATCH_START ... PATCH_END
-    m = re.search(r"PATCH_START\n(.*?)PATCH_END", response, re.DOTALL)
-    if m:
-        code = m.group(1).strip()
-        if code.startswith("```python"):
-            code = re.sub(r"^```python\n?", "", code)
-        elif code.startswith("```"):
-            code = re.sub(r"^```\n?", "", code)
-        if code.endswith("```"):
-            code = code[:-3].strip()
-        return code
-    # Format 3: python code fence without PATCH markers
-    m = re.search(r"```python\n(.*?)```", response, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    # Format 4: generic code fence with def
-    m = re.search(r"```\n?(def \w+.*?)```", response, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    # Format 5: raw function definition
-    m = re.search(r"(def \w+\([^)]*\).*?)(?=\n\n(?:EXPLANATION|```|\Z)|\Z)", response, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return ""
-
-
-def _replace_function(source: str, new_code: str) -> str:
-    """Replace function definition(s) in source."""
-    result = source
-
-    # Extract function names from new_code
-    new_defs = list(re.finditer(r"^def (\w+)\(", new_code, re.MULTILINE))
-    if not new_defs:
-        return source
-
-    for m in new_defs:
-        name = m.group(1)
-        # Extract this function's full body from new_code
-        start = m.start()
-        next_in_new = re.search(r"\ndef \w+\(", new_code[start + 1:])
-        if next_in_new:
-            func_body = new_code[start:start + 1 + next_in_new.start()].rstrip()
-        else:
-            func_body = new_code[start:].rstrip()
-
-        # Replace in source — MULTILINE so ^ matches at line starts
-        pattern = re.compile(rf"^def {name}\(.*?(?=\ndef \w+\(|\Z)", re.DOTALL | re.MULTILINE)
-        if pattern.search(result):
-            result = pattern.sub(func_body + "\n\n", result, count=1)
-
-    return result if result != source else source
-
-
-def _try_fix_syntax(code: str, error: SyntaxError) -> str:
-    """Try to auto-fix common LLM-generated syntax errors."""
-    if not code or not error:
-        return ""
-
-    # Fix 1: Chinese quotes → ASCII
-    fixed = code.replace("\u201c", '"').replace("\u201d", '"')
-    fixed = fixed.replace("\u2018", "'").replace("\u2019", "'")
-    fixed = fixed.replace("\u300c", '"').replace("\u300d", '"')
-    if fixed != code:
-        return fixed
-
-    # Fix 2: Unterminated string literal
-    err_str = str(error).lower()
-    if "unterminated" in err_str:
-        lines = code.splitlines()
-        error_line = error.lineno or 0
-        if error_line > 0 and error_line <= len(lines):
-            line = lines[error_line - 1]
-            for quote_char in ('"', "'"):
-                count = line.count(quote_char) - line.count(f"\\{quote_char}")
-                if count % 2 == 1:
-                    lines[error_line - 1] = line + quote_char
-                    return "\n".join(lines)
-
-    # Fix 3: Unexpected EOF
-    if "unexpected eof" in err_str or "unexpected end of file" in err_str:
-        opens = code.count("(") - code.count(")")
-        sq = code.count("[") - code.count("]")
-        cu = code.count("{") - code.count("}")
-        suffix = ""
-        if opens > 0: suffix += ")" * opens
-        if sq > 0: suffix += "]" * sq
-        if cu > 0: suffix += "}" * cu
-        if suffix:
-            return code + "\n" + suffix
-
-    return ""
-
-
-def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tuple[bool, str]:
-    """Run pytest and return (passed, output_tail)."""
-    try:
-        result = subprocess.run(
-            ["python", "-m", "pytest", str(test_path), "-x", "-q", "--tb=short"],
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-        )
-        output = (result.stdout or "") + (result.stderr or "")
-        passed = result.returncode == 0 and "passed" in output
-        return passed, output[-1500:]
-    except subprocess.TimeoutExpired:
-        return False, f"pytest timed out after {timeout}s"
-    except Exception as e:
-        return False, f"pytest error: {e}"
-
-
-def _extract_explanation(response: str) -> str:
-    m = re.search(r"EXPLANATION:\s*(.+?)(?:\n```|\Z)", response, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
-# ---------------------------------------------------------------------------
 
 _IMPROVE_PROMPT = """\
 You are a code improvement agent. Fix bugs and improve quality based on \
@@ -719,7 +492,8 @@ class Improver:
         return results[-1][1] if results else ImprovementResult()
 
     def _improve_file(
-        self, source_path: Path, evaluation: Evaluation, keywords: list[str]
+        self, source_path: Path, evaluation: Evaluation,
+        keywords: list[str], evidence: str = ""
     ) -> ImprovementResult:
         """Improve a single source file."""
         backup_path = source_path.with_suffix(".py.bak")
@@ -839,6 +613,7 @@ def run_evolution(
     evaluator: Evaluator | None,
     improver: Improver | None,
     task: Task,
+    learner: "Learner | None" = None,
     *,
     target_score: float = 90.0,
     max_rounds: int = 3,
