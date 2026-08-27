@@ -352,7 +352,7 @@ def cmd_chat(args):
             # Level 3: Trigger improvement if enough evidence
             if learning.trigger_evolution:
                 tui.event("learner_trigger", f"⚠ Auto-evolving: {learning.trigger_reason[:100]}")
-                improvement = improver.improve(evaluation, evidence=learning.trigger_reason)
+                improvement = improver.improve(evaluation)
                 if improvement.patched:
                     tui.event("improver_done", f"✓ Auto-patched: {improvement.explanation[:100]}")
                 else:
@@ -382,14 +382,14 @@ def cmd_chat(args):
     session_file = os.path.join(sessions_dir, f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
     session_entries = []
 
-    def _save_session(user_msg: str, answer: str, success: bool):
+    def _save_session(user_msg: str, answer: str, success: bool, result_obj=None):
         entry = {
             "time": datetime.now().isoformat(),
             "user": user_msg,
             "answer": answer[:500],
             "success": success,
-            "turns": getattr(result, "turns", 0),
-            "tool_calls": len(getattr(result, "tool_calls", [])),
+            "turns": getattr(result_obj, "turns", 0),
+            "tool_calls": len(getattr(result_obj, "tool_calls", [])),
         }
         session_entries.append(entry)
         try:
@@ -419,7 +419,7 @@ def cmd_chat(args):
                 tui.error(result.error or "Task failed")
 
             # Save to session history
-            _save_session(user_input, result.answer or result.error or "", result.success)
+            _save_session(user_input, result.answer or result.error or "", result.success, result)
 
             # Learn from every task — this is the self-evolution in daily use
             _learn_after_task(user_input, result)

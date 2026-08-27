@@ -257,17 +257,16 @@ def _self_repair(error: str, tool_name: str, tool_args: dict, config: Config) ->
         return tool_name, tool_args, "timeout — no auto-fix, will retry"
 
     if error_type == "not_found":
-        # Try expanding user path, or switch to search_files
         if "path" in tool_args:
             path = tool_args["path"]
             if "~" in path or "Desktop" in path or "桌面" in path:
                 import os
                 new_args = dict(tool_args)
                 new_args["path"] = os.path.expanduser(path.replace("桌面", "Desktop"))
-                return tool_name, new_args, f"expanded path: {path} → {new_args['path']}"
+                return tool_name, new_args, f"expanded path: {path} -> {new_args['path']}"
             # Try search_files instead
-            return "search_files", {"pattern": "*", "path": "."}, "switched to search_files"
-        return tool_name, tool_args, "not_found — no path to fix"
+            return "search_files", {"pattern": ".*", "path": "."}, "switched to search_files"
+        return tool_name, tool_args, "not_found -- no path to fix"
 
     if error_type == "encoding":
         # For run_command, try with explicit encoding
@@ -426,13 +425,11 @@ def run_react(
                             trace.add_repair(f"Turn {turn}: {strategy} -> recovered")
                         else:
                             _emit("tool_result", f"  ↳ Still failing: {tool_result[:200]}")
-                            tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+                            tool_calls.append({"name": new_name, "args": new_args, "result": tool_result})
                             trace.add_repair(f"Turn {turn}: {strategy} -> still failing")
+                    else:
                         _emit("tool_result", tool_result[:200])
                         tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
-                else:
-                    _emit("tool_result", tool_result[:200])
-                    tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
 
                 turn_record.tool_result = tool_result[:200]
 
@@ -483,6 +480,14 @@ def run_react(
 
         # No tool_calls from API — check if text response is empty
         if not response or not response.strip():
+            # Native FC may return empty content with NO tool_calls but also
+            # a non-error response. If we already have tool_calls from this turn,
+            # treat empty content as "continuing" rather than an error.
+            if tool_calls:
+                _emit("llm_start", f"Turn {turn+1}/{max_turns} (continuing after tool calls)")
+                messages.append({"role": "assistant", "content": ""})
+                messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
+                continue
             _emit("llm_error", "Empty response")
             trace.add_error("Empty LLM response")
             messages.append({"role": "assistant", "content": ""})
@@ -508,20 +513,20 @@ def run_react(
                 new_name, new_args, strategy = _self_repair(tool_result, tool_name, tool_args, config)
 
                 if (new_name, new_args) != (tool_name, tool_args):
-                    _emit("self_repair", f"  ↳ Self-repair: {strategy}")
+                    _emit("self_repair", f"  Self-repair: {strategy}")
                     turn_record.self_repaired = True
                     turn_record.repair_strategy = strategy
                     had_repair = True
                     tool_result = execute_tool(new_name, new_args)
-                    _emit("tool_call", f"  ↳ {new_name}({new_args})")
+                    _emit("tool_call", f"  -> {new_name}({new_args})")
 
                     if not (tool_result.startswith("Error") or tool_result.startswith("ERROR")):
-                        _emit("tool_result", f"  ↳ {tool_result[:200]}")
+                        _emit("tool_result", f"  -> {tool_result[:200]}")
                         tool_calls.append({"name": new_name, "args": new_args, "result": tool_result})
                         trace.add_repair(f"Turn {turn}: {strategy} -> recovered")
                     else:
-                        _emit("tool_result", f"  ↳ Still failing: {tool_result[:200]}")
-                        tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+                        _emit("tool_result", f"  -> Still failing: {tool_result[:200]}")
+                        tool_calls.append({"name": new_name, "args": new_args, "result": tool_result})
                         trace.add_repair(f"Turn {turn}: {strategy} -> still failing")
                 else:
                     _emit("tool_result", tool_result[:200])
