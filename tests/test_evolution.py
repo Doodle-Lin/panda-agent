@@ -252,6 +252,107 @@ class TestImprover:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: Evolution history (patch outcomes written to / read from memory)
+# ---------------------------------------------------------------------------
+
+class TestImproverMemoryWrites:
+    """Phase 3: Improver writes patch outcomes to memory and reads history."""
+
+    @patch("panda_agent.orchestrator.shutil.copy2")
+    @patch("panda_agent.orchestrator.call_llm")
+    @patch("panda_agent.orchestrator._run_pytest")
+    @patch("panda_agent.orchestrator.replace_definition")
+    def test_patch_accepted_writes_memory(
+        self, mock_replace, mock_pytest, mock_llm, mock_copy
+    ):
+        """Patch accepted → memory.write called with title containing 'accepted'."""
+        # Arrange: a valid patch that passes the test gate.
+        mock_replace.return_value = MagicMock(ok=True, source="def foo():\n    return 42\n")
+        mock_pytest.return_value = (True, "1 passed")
+        mock_llm.return_value = (
+            "PATCH_START\n```python\ndef foo():\n    return 42\n```\nPATCH_END\n"
+            "EXPLANATION: improved return value\n"
+        )
+
+        config = Config()
+        improver = Improver(config)
+        # Inject mock memory client so writes are observable.
+        mock_memory = MagicMock()
+        improver.memory = mock_memory
+
+        evaluation = Evaluation(
+            score=80, issues=["weak logic"],
+            root_cause="logic bug", suggested_changes="return 42",
+        )
+
+        mock_path = MagicMock()
+        mock_path.name = "tools.py"
+        mock_path.read_text.return_value = "def foo():\n    return 1\n"
+        mock_path.write_text = MagicMock()
+
+        with patch("panda_agent.orchestrator._extract_relevant",
+                   return_value="def foo():\n    return 1\n"):
+            result = improver._improve_file(mock_path, evaluation, ["foo"])
+
+        # Patch accepted → patched=True
+        assert result.patched is True
+        # memory.write must have been called with a title containing "accepted"
+        assert mock_memory.write.called, "memory.write should be called on accepted patch"
+        write_kwargs = mock_memory.write.call_args.kwargs
+        assert "accepted" in write_kwargs.get("title", "").lower(), (
+            f"expected title to contain 'accepted', got: {write_kwargs.get('title')!r}"
+        )
+        assert write_kwargs.get("node_type") == "reference"
+        assert write_kwargs.get("source") == "panda_improver"
+
+    @patch("panda_agent.orchestrator.shutil.copy2")
+    @patch("panda_agent.orchestrator.call_llm")
+    @patch("panda_agent.orchestrator.replace_definition")
+    def test_patch_rejected_writes_memory(
+        self, mock_replace, mock_llm, mock_copy
+    ):
+        """Patch rejected (all retries fail) → memory.write with 'rejected'."""
+        # Arrange: a broken patch (syntax error) that replace_definition rejects,
+        # so every retry fails and the loop exhausts max_retries.
+        mock_replace.return_value = MagicMock(ok=False, error="syntax error", source="")
+        mock_llm.return_value = (
+            "PATCH_START\n```python\ndef foo(:\n    return 42\n```\nPATCH_END\n"
+            "EXPLANATION: broken syntax\n"
+        )
+
+        config = Config()
+        improver = Improver(config)
+        # Inject mock memory client so writes are observable.
+        mock_memory = MagicMock()
+        improver.memory = mock_memory
+
+        evaluation = Evaluation(
+            score=50, issues=["bad code"],
+            root_cause="syntax error", suggested_changes="fix syntax",
+        )
+
+        mock_path = MagicMock()
+        mock_path.name = "brain.py"
+        mock_path.read_text.return_value = "def foo():\n    return 1\n"
+        mock_path.write_text = MagicMock()
+
+        with patch("panda_agent.orchestrator._extract_relevant",
+                   return_value="def foo():\n    return 1\n"):
+            result = improver._improve_file(mock_path, evaluation, ["foo"])
+
+        # Patch rejected → patched=False
+        assert result.patched is False
+        # memory.write must have been called with a title containing "rejected"
+        assert mock_memory.write.called, "memory.write should be called on rejected patch"
+        write_kwargs = mock_memory.write.call_args.kwargs
+        assert "rejected" in write_kwargs.get("title", "").lower(), (
+            f"expected title to contain 'rejected', got: {write_kwargs.get('title')!r}"
+        )
+        assert write_kwargs.get("node_type") == "reference"
+        assert write_kwargs.get("source") == "panda_improver"
+
+
+# ---------------------------------------------------------------------------
 # _extract_patch tests (11)
 # ---------------------------------------------------------------------------
 
