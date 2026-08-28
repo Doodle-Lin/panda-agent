@@ -81,7 +81,7 @@ PandaAgent is a **self-evolving agent framework**. Two design pillars are non-ne
 - Every task = one commit (or one logical group)
 - Commit message: `type(scope): description` (e.g., `feat(memory): persist patch outcomes to graph memory`)
 - Merge to main only after independent review passes
-- Before pushing to GitHub: `git log -p -S "api_key\|internal\|your-api-endpoint.com" | head -50` —
+- Before pushing to GitHub: scan history for API keys, internal domains, personal paths
   no API keys, internal domains, or personal emails in history
 
 ## Architecture Context (for the agent working on this codebase)

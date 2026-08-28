@@ -4,7 +4,7 @@
 - E:\workspace\evo-agent
 - Python 3.12, pytest
 - 模型: GLM52RJPT (推理模型, content 空→reasoning_content)
-- API: https://your-api-endpoint.com/v1 (OpenAI 兼容)
+- API: https://your-api-endpoint.com/v1 (OpenAI compatible)
 
 ## 规则
 1. TDD: 先写测试看 RED → 改代码看 GREEN

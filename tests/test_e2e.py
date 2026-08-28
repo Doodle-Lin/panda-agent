@@ -5,7 +5,7 @@ Marked as slow — run with: python -m pytest tests/test_e2e.py -v -m slow
 
 Prerequisites:
 - Valid API key in ~/.panda/config.yaml
-- Network access to https://your-api-endpoint.com/v1
+- Network access to an OpenAI-compatible API endpoint
 - Temp directory for file creation tests
 """
 import sys, os, tempfile, shutil, time
