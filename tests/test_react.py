@@ -10,21 +10,15 @@ Tests cover:
 - Memory injection, callbacks, single-quote JSON parsing
 """
 
-import os
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from panda_agent.config import Config, ModelConfig, AgentConfig, MemoryConfig
 from panda_agent.llm import LLMResponse
 from panda_agent.react import (
     run_react,
     _parse_tool_call,
-    _parse_done,
-    _parse_failed,
-    _classify_error,
     _self_repair,
 )
-from panda_agent.types import ExecutionTrace
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +277,7 @@ class TestSelfRepairNotFound:
              patch("panda_agent.react.execute_tool", side_effect=fake_execute_tool), \
              patch("panda_agent.react._self_repair", side_effect=tracking_repair):
 
-            result = run_react("read file from desktop", config)
+            run_react("read file from desktop", config)
 
         assert len(repair_calls) == 1
         error, tool_name, tool_args, repair_result = repair_calls[0]

@@ -6,14 +6,9 @@ Inspired by opencode's processor.ts doom loop detection:
 
 panda's version: simpler, counts consecutive identical tool calls in react loop.
 """
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
-from panda_agent.react import run_react, _check_doom_loop
+from panda_agent.react import _check_doom_loop
 from panda_agent.llm import LLMResponse
 from panda_agent.config import Config, AgentConfig, ModelConfig, MemoryConfig
-from unittest.mock import patch
 
 class _FakeLLM:
     def __init__(self, responses):

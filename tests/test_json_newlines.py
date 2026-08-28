@@ -5,10 +5,6 @@ string values. JSON spec requires \n escape. json.loads fails.
 
 Fix: After json.loads fails, try escaping raw control chars then re-parse.
 """
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 from panda_agent.react import _parse_tool_call
 
 

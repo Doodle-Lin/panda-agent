@@ -7,14 +7,15 @@ Tests each layer of the 3-layer self-evolution architecture:
 
 Each test verifies the COMPLETE closed loop, not just individual functions.
 """
-import sys, os, json, tempfile, shutil
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
+import os
+import json
+import tempfile
 
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from panda_agent.react import run_react, _self_repair, _classify_error, _should_write_memory
-from panda_agent.orchestrator import Learner, Improver, Evaluator
+from panda_agent.orchestrator import Learner, Improver
 from panda_agent.config import Config, ModelConfig, AgentConfig, MemoryConfig, EvolutionConfig, DisplayConfig
-from panda_agent.types import Task, ExecutionResult, Evaluation, ExecutionTrace, TurnRecord, LearningResult
+from panda_agent.types import Task, ExecutionResult, Evaluation
 from panda_agent.llm import LLMResponse
 
 
@@ -101,7 +102,7 @@ class TestLevel1SelfRepair:
 
     def test_run_react_self_repair_in_trace(self):
         """run_react should record self-repair in ExecutionTrace."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory():
             config = make_config()
             config.agent.max_turns = 5
 

@@ -2,12 +2,11 @@
 
 Phase 3: ReAct loop prioritizes llm_resp.tool_calls over text TOOL_CALL: parsing.
 """
-import sys, os, json, tempfile
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
+import os
+import tempfile
 
-from unittest.mock import patch, MagicMock
-from panda_agent.react import run_react, ReActResult
+from unittest.mock import patch
+from panda_agent.react import run_react
 from panda_agent.llm import LLMResponse
 from panda_agent.config import Config, ModelConfig, AgentConfig, MemoryConfig, EvolutionConfig, DisplayConfig
 

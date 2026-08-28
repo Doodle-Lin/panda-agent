@@ -8,10 +8,6 @@ New behavior: only write when:
 4. NOT for simple 1-step tasks (just reading a file, listing dirs)
 5. NOT for chat/greeting (no tool calls)
 """
-import sys, os, tempfile
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 from unittest.mock import patch, MagicMock
 from panda_agent.react import run_react
 from panda_agent.llm import LLMResponse
@@ -41,7 +37,7 @@ class TestMemoryAutoWriteStrategy:
 
         done_resp = LLMResponse(content="DONE: Hello!", reasoning="", tool_calls=[])
         with patch("panda_agent.react.call_llm_detailed", return_value=done_resp):
-            result = run_react("hello", config, memory=mock_mem)
+            run_react("hello", config, memory=mock_mem)
 
         # Should NOT have written to memory
         mock_mem.write.assert_not_called()
@@ -94,7 +90,7 @@ class TestMemoryAutoWriteStrategy:
         ]
         with patch("panda_agent.react.call_llm_detailed", side_effect=resps):
             with patch("panda_agent.react.execute_tool", side_effect=["Error: file not found: ~/nonexistent.txt", "file content"]):
-                result = run_react("read ~/nonexistent.txt", config, memory=mock_mem)
+                run_react("read ~/nonexistent.txt", config, memory=mock_mem)
 
         # Self-repair means valuable experience -> write
         mock_mem.write.assert_called_once()
@@ -112,7 +108,7 @@ class TestMemoryAutoWriteStrategy:
         ]
         with patch("panda_agent.react.call_llm_detailed", side_effect=resps):
             with patch("panda_agent.react.execute_tool", return_value="file1\nfile2"):
-                result = run_react("list files", config, memory=mock_mem)
+                run_react("list files", config, memory=mock_mem)
 
         # Single tool call, no errors -> NOT valuable enough
         mock_mem.write.assert_not_called()

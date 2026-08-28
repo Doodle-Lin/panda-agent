@@ -11,9 +11,7 @@ Fuzzy matching should try:
 3. Normalize line endings
 4. Tab-to-space normalization
 """
-import sys, os, tempfile
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
+import os
 
 from panda_agent.tools import _tool_patch_file
 
@@ -22,7 +20,8 @@ class TestPatchFileFuzzy:
     """patch_file should tolerate minor whitespace differences."""
 
     def _write_temp(self, content):
-        import tempfile as _tf, os as _os
+        import tempfile as _tf
+        import os as _os
         d = _tf.mkdtemp()
         # Set PANDA_WORKSPACE so safe_path allows the temp dir
         _os.environ["PANDA_WORKSPACE"] = d
@@ -66,7 +65,8 @@ class TestPatchFileFuzzy:
 
     def test_line_ending_normalization(self):
         """CRLF in content should match LF in old_string."""
-        import os as _os, tempfile as _tf
+        import os as _os
+        import tempfile as _tf
         d = _tf.mkdtemp()
         _os.environ["PANDA_WORKSPACE"] = d
         path = _os.path.join(d, "test_crlf.py")

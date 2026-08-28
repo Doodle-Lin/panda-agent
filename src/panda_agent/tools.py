@@ -8,10 +8,8 @@ The Improver can patch this file to improve tool implementations.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from .security import SecurityError, parse_command, safe_path, sanitized_env
@@ -309,19 +307,6 @@ def get_tool_schemas() -> list[dict]:
             },
         })
     return schemas
-
-
-def execute_tool(name: str, args: dict) -> str:
-    """Execute a tool by name with given args."""
-    if name not in TOOLS:
-        return f"Error: unknown tool '{name}'"
-    handler = TOOLS[name]["handler"]
-    try:
-        return handler(**args)
-    except TypeError as e:
-        return f"Error: invalid args for '{name}': {e}"
-    except Exception as e:
-        return f"Error in tool '{name}': {e}"
 
 
 def execute_tool(name: str, args: dict) -> str:

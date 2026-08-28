@@ -15,12 +15,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 import os
 
-from .config import load_config, save_config, config_path, default_config_yaml, Config
+from .config import load_config, save_config, config_path, default_config_yaml
 from .tui import TUI
-from .tools import TOOLS, get_tool_descriptions
+from .tools import get_tool_descriptions
 from .react import run_react
 from .memory import MemoryClient
 
@@ -267,7 +266,7 @@ def main():
     sub.add_parser("tools", help="List available tools")
 
     # history
-    hist = sub.add_parser("history", help="View evolution history")
+    sub.add_parser("history", help="View evolution history")
 
     args = parser.parse_args()
 
@@ -364,7 +363,7 @@ def cmd_chat(args):
                     tui.event("improver_done", f"✓ Auto-patched: {improvement.explanation[:100]}")
                 else:
                     tui.event("improver_detail", f"Patch attempt: {improvement.explanation[:100]}")
-        except Exception as e:
+        except Exception:
             # Learning should never crash the chat
             pass
 
@@ -379,7 +378,8 @@ def cmd_chat(args):
         return
 
     # Interactive mode
-    import os, json
+    import os
+    import json
     from datetime import datetime
 
     # Session history — persisted to ~/.panda/sessions/

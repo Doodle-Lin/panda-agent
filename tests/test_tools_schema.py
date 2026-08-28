@@ -2,10 +2,6 @@
 
 Phase 1: get_tool_schemas() returns the tools list for API request.
 """
-import sys, os, json
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 from panda_agent.tools import get_tool_schemas, TOOLS
 
 

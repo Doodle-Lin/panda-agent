@@ -13,14 +13,13 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .brain import build_system_prompt, max_turns_for_task, should_retry
+from .brain import build_system_prompt, max_turns_for_task
 from .config import Config
-from .llm import call_llm_detailed, LLMResponse
-from .tools import TOOLS, execute_tool, get_tool_descriptions, get_tool_schemas
+from .llm import call_llm_detailed
+from .tools import execute_tool, get_tool_descriptions, get_tool_schemas
 from .memory import MemoryClient
 from .types import ExecutionTrace, TurnRecord
 
@@ -155,7 +154,7 @@ def _parse_tool_call(text: str) -> dict | None:
     # Try single-quote fix
     try:
         return json.loads(raw.replace("'", '"'))
-    except:
+    except json.JSONDecodeError:
         return None
 
 
@@ -202,7 +201,7 @@ def _escape_control_chars_in_strings(json_str: str) -> str:
 
 def _parse_done(text: str) -> str | None:
     """Extract DONE message from LLM response.
-    
+
     Captures everything after 'DONE:' until end of text (not just first line).
     This allows multi-line answers like capability lists.
     """
@@ -601,7 +600,7 @@ def run_react(
         stripped = response.strip()
         has_format = any(m in stripped for m in ("TOOL_CALL:", "DONE:", "FAILED:"))
         if not has_format and len(stripped) > 5:
-            _emit("llm_thinking", f"  Reasoning → requesting action format")
+            _emit("llm_thinking", "  Reasoning → requesting action format")
             turn_record.action = "REASONING"
             trace.turns.append(turn_record)
             messages.append({"role": "assistant", "content": response})

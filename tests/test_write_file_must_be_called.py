@@ -3,14 +3,8 @@
 This was the root cause of 'write novel to desktop' failing —
 LLM said DONE without actually calling write_file.
 """
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
-from panda_agent.react import run_react
 from panda_agent.llm import LLMResponse
 from panda_agent.config import Config, AgentConfig, ModelConfig, MemoryConfig
-from unittest.mock import patch, MagicMock
 
 class _FakeLLM:
     def __init__(self, responses):
