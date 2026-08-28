@@ -19,6 +19,7 @@ from panda_agent.orchestrator import (
     Evaluator, Learner, Improver, run_evolution,
     _extract_patch, _replace_function,
 )
+from panda_agent.benchmark import BenchmarkTask
 
 
 # ---------------------------------------------------------------------------
@@ -586,3 +587,114 @@ class TestWorktreeVerification:
         # In a non-git directory, should fail open
         passed, msg = improver._verify_in_worktree("x = 1\n", tmp_path / "src" / "test.py")
         assert passed is True  # fail open for non-git
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Evaluator — deterministic benchmark scorer + LLM consistency check
+# ---------------------------------------------------------------------------
+
+class TestEvaluatorDeterministicScorer:
+    """Change 1: Evaluator uses deterministic scorer when benchmark task matches."""
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_uses_deterministic_scorer(self, mock_llm, tmp_path):
+        """A matching BenchmarkTask with exact_match scorer returns a
+        deterministic score WITHOUT calling the LLM."""
+        bt = BenchmarkTask(
+            id="bt-1",
+            instruction="What is 2+2?",
+            scorer="exact_match",
+            expected={"contains": ["4"]},
+        )
+        config = Config()
+        evaluator = Evaluator(
+            config,
+            benchmark_tasks=[bt],
+            workspace=tmp_path,
+        )
+        task = Task(instruction="What is 2+2?")
+        result = ExecutionResult(
+            success=True,
+            tool_calls=[{"name": "calc", "result": "The answer is 4"}],
+        )
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        # answer "The answer is 4" contains "4" → score 100
+        assert evaluation.score == 100.0
+        # LLM must NOT be called when deterministic scorer matches
+        assert mock_llm.call_count == 0
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_falls_back_to_llm_when_no_match(self, mock_llm):
+        """When benchmark tasks don't match the task instruction, the LLM is used."""
+        bt = BenchmarkTask(
+            id="bt-2",
+            instruction="some unrelated instruction",
+            scorer="exact_match",
+            expected={"contains": ["x"]},
+        )
+        mock_llm.return_value = '{"score": 72, "issues": []}'
+        config = Config()
+        evaluator = Evaluator(
+            config,
+            benchmark_tasks=[bt],
+            workspace=Path("."),
+        )
+        task = Task(instruction="a completely different task")
+        result = ExecutionResult(success=True, tool_calls=[])
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        assert evaluation.score == 72.0
+        # LLM MUST be called since no benchmark matched
+        assert mock_llm.call_count >= 1
+
+
+class TestEvaluatorConsistencyCheck:
+    """Change 2: LLM consistency check — median of multiple runs, skip on high variance."""
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_consistency_check_skips_high_variance(self, mock_llm):
+        """Mock LLM to return scores [40, 80, 90] across 3 calls → stdev > 15 → None."""
+        responses = iter([
+            '{"score": 40, "issues": []}',
+            '{"score": 80, "issues": []}',
+            '{"score": 90, "issues": []}',
+        ])
+        mock_llm.side_effect = lambda *a, **k: next(responses)
+
+        config = Config()
+        evaluator = Evaluator(config, eval_runs=3)
+        task = Task(instruction="test task")
+        result = ExecutionResult(success=True, tool_calls=[])
+
+        evaluation = evaluator.evaluate(task, result)
+
+        # stdev([40, 80, 90]) ≈ 20.8 > 15 → skip round → None
+        assert evaluation is None
+        assert evaluator.last_error is not None
+        assert "variance" in evaluator.last_error.lower()
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_consistency_check_takes_median(self, mock_llm):
+        """Mock LLM to return scores [75, 80, 85] → stdev small → median = 80."""
+        responses = iter([
+            '{"score": 75, "issues": ["a"]}',
+            '{"score": 80, "issues": ["b"]}',
+            '{"score": 85, "issues": ["c"]}',
+        ])
+        mock_llm.side_effect = lambda *a, **k: next(responses)
+
+        config = Config()
+        evaluator = Evaluator(config, eval_runs=3)
+        task = Task(instruction="test task")
+        result = ExecutionResult(success=True, tool_calls=[])
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        # median([75, 80, 85]) = 80
+        assert evaluation.score == 80.0

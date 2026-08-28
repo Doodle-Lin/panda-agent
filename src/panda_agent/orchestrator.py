@@ -23,6 +23,7 @@ from .react import run_react, ReActResult
 from .tools import TOOLS, execute_tool, get_tool_descriptions
 from .brain import build_system_prompt
 from .memory import MemoryClient
+from .benchmark import BenchmarkTask, score_exact_match, score_file_state
 from .types import (
     Task, ExecutionResult, Evaluation, ImprovementResult,
     RoundResult, EvolutionResult, Event,
@@ -83,10 +84,27 @@ The "score" field must be a number between 0 and 100.
 
 
 class Evaluator:
-    """Evaluator: uses LLM to score the execution result."""
+    """Evaluator: uses LLM to score the execution result.
 
-    def __init__(self, config: Config):
+    When ``benchmark_tasks`` and ``workspace`` are provided, a deterministic
+    scorer (``exact_match`` or ``file_state``) is used in preference to the
+    LLM whenever the task instruction matches a benchmark task. When
+    ``eval_runs > 1`` the LLM evaluation is repeated and the median is taken,
+    skipping the round if the variance is too high.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        benchmark_tasks: list[BenchmarkTask] | None = None,
+        workspace: Path | None = None,
+        eval_runs: int = 1,
+    ):
         self.config = config
+        self.benchmark_tasks = benchmark_tasks
+        self.workspace = workspace
+        self.eval_runs = eval_runs
+        self.last_error: str | None = None
 
     def evaluate(self, task: Task, result: ExecutionResult) -> Evaluation | None:
         """Score an execution result.
@@ -96,6 +114,58 @@ class Evaluator:
         this round and must skip improving rather than acting on a guess --
         see :mod:`panda_agent.parsing` for why a default score is harmful.
         """
+        # Change 1: deterministic benchmark scorer takes priority over LLM.
+        if self.benchmark_tasks and self.workspace:
+            for bt in self.benchmark_tasks:
+                if bt.scorer in ("exact_match", "file_state") and (
+                    bt.instruction.strip() == task.instruction.strip()
+                    or bt.instruction.strip() in task.instruction.strip()
+                    or task.instruction.strip() in bt.instruction.strip()
+                ):
+                    answer = result.error or "completed"
+                    if result.success and result.tool_calls:
+                        # Use the last tool call's result as the answer
+                        answer = result.tool_calls[-1].get("result", answer)
+                    try:
+                        if bt.scorer == "exact_match":
+                            score = score_exact_match(bt, answer, self.workspace)
+                        else:
+                            score = score_file_state(bt, answer, self.workspace)
+                        return Evaluation(
+                            score=score,
+                            issues=[] if score >= 80 else [f"benchmark task '{bt.id}' scored {score:.0f}"],
+                            root_cause="" if score >= 80 else f"deterministic scorer: {bt.scorer}",
+                            suggested_changes="",
+                        )
+                    except Exception:
+                        pass  # fall through to LLM evaluation
+
+        # Change 2: consistency check — run multiple LLM evaluations and take
+        # the median, skipping the round when the variance is too high.
+        if self.eval_runs > 1:
+            scores: list[float] = []
+            evaluations: list[Evaluation] = []
+            for _ in range(self.eval_runs):
+                eval_result = self._single_llm_eval(task, result)
+                if eval_result is not None:
+                    scores.append(eval_result.score)
+                    evaluations.append(eval_result)
+            if not evaluations:
+                return None
+            import statistics
+            median_score = statistics.median(scores)
+            if len(scores) >= 2 and statistics.stdev(scores) > 15:
+                self.last_error = f"evaluation variance too high: {scores}"
+                return None  # skip this round
+            # Return the evaluation closest to median
+            best = min(evaluations, key=lambda e: abs(e.score - median_score))
+            best.score = median_score
+            return best
+
+        return self._single_llm_eval(task, result)
+
+    def _single_llm_eval(self, task: Task, result: ExecutionResult) -> Evaluation | None:
+        """Run a single LLM evaluation pass with one bounded retry."""
         prompt = _EVAL_PROMPT.format(
             task=task.instruction,
             success=result.success,
