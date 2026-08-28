@@ -40,7 +40,7 @@ class Executor:
 
     def __init__(self, config: Config):
         self.config = config
-        self.memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
+        self.memory = MemoryClient.from_config(config.memory) if config.memory.enabled else None
 
     def execute(self, task: Task) -> ExecutionResult:
         result = run_react(
@@ -244,7 +244,7 @@ class Learner:
 
     def __init__(self, config: Config):
         self.config = config
-        self.memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
+        self.memory = MemoryClient.from_config(config.memory) if config.memory.enabled else None
         # Error pattern registry — persisted to $PANDA_HOME/error_counts.json
         self._error_counts: dict[str, int] = {}
         panda_home = os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))
@@ -557,7 +557,7 @@ class Improver:
         self.baseline: Any | None = None
         self.tolerance: float = 2.0
         self.last_reject_reason: str | None = None
-        self.memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
+        self.memory = MemoryClient.from_config(config.memory) if config.memory.enabled else None
         self.use_worktree: bool = False  # Set True to enable isolated verification
 
     def _verify_in_worktree(self, patched_source: str, source_path: Path) -> tuple[bool, str]:
