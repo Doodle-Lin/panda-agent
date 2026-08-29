@@ -6,7 +6,6 @@ pre-existing code, so they fail loudly if the boundary is ever removed.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -20,7 +19,6 @@ from panda_agent.security import (
     safe_path,
     sanitized_env,
     unsafe_mode,
-    workspace_root,
 )
 from panda_agent.tools import execute_tool
 

@@ -5,15 +5,13 @@ Uses mocks for LLM calls — no real API needed.
 
 import json
 import os
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 
 from panda_agent.config import Config
 from panda_agent.types import (
     Task, ExecutionResult, Evaluation, ImprovementResult,
-    RoundResult, EvolutionResult, Event,
-    ExecutionTrace, TurnRecord, ErrorRecord, LearningResult,
+    RoundResult, EvolutionResult, ExecutionTrace, LearningResult,
 )
 from panda_agent.orchestrator import (
     Evaluator, Learner, Improver, run_evolution,
@@ -414,7 +412,6 @@ class TestReplaceFunction:
     def test_replace_function_multiple(self):
         """Test 13: Replace multiple functions in one pass."""
         source = "def func_a():\n    return 1\n\ndef func_b():\n    return 2\n"
-        new_code = "def func_a():\n    return 10\n\ndef func_b():\n    return 20\n"
         # _replace_function replaces one function at a time;
         # replacing multiple in one call is not supported by libcst-based patching.
         # Test that the first function IS replaced:

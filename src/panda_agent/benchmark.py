@@ -20,7 +20,6 @@ patches on noise alone; see :func:`estimate_noise`.
 
 from __future__ import annotations
 
-import json
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path

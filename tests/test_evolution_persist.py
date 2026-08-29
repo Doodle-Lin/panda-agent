@@ -3,13 +3,14 @@
 Level 2 Learner must persist error counts across restarts.
 Level 3 Improver trigger must work with persisted counts.
 """
-import sys, os, json, tempfile
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
+import os
+import json
+import tempfile
 
 from panda_agent.orchestrator import Learner
 from panda_agent.config import Config, ModelConfig, AgentConfig, MemoryConfig, EvolutionConfig, DisplayConfig
-from panda_agent.types import Task, ExecutionResult, Evaluation, ExecutionTrace
-from unittest.mock import patch, MagicMock
+from panda_agent.types import Task, ExecutionResult, Evaluation
+from unittest.mock import patch
 
 
 def make_config():

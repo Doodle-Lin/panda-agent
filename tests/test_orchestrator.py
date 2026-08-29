@@ -12,9 +12,7 @@ Improver code path rather than the gate function in isolation.
 
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-from unittest.mock import MagicMock, patch as mock_patch
+from unittest.mock import patch as mock_patch
 
 import pytest
 

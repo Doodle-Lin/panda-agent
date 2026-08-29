@@ -2,9 +2,7 @@
 
 Phase 2: LLMResponse has tool_calls field, call_llm_detailed sends tools param.
 """
-import sys, os, json
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
+import json
 
 from panda_agent.llm import LLMResponse, call_llm_detailed
 from panda_agent.config import ModelConfig

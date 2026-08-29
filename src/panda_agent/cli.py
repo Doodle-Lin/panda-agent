@@ -15,12 +15,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 import os
 
-from .config import load_config, save_config, config_path, default_config_yaml, Config
+from .config import load_config, save_config, config_path, default_config_yaml
 from .tui import TUI
-from .tools import TOOLS, get_tool_descriptions
+from .tools import get_tool_descriptions
 from .react import run_react
 from .memory import MemoryClient
 
@@ -138,11 +137,9 @@ def _cmd_memory_tidy(tui: TUI, memory: MemoryClient, llm_callback) -> None:
 
             if action == "refine" and nid and new_content:
                 # Update node content with refined version
-                engine = memory._mem._engine
-                if nid in engine.graph.nodes:
-                    old_len = len(engine.graph.nodes[nid].get("content", ""))
-                    engine.update_node(nid, content=new_content)
-                    engine.save()
+                current = next((node for node in nodes if node["id"] == nid), None)
+                if current and memory.update_by_id(nid, content=new_content):
+                    old_len = len(current.get("content", ""))
                     new_len = len(new_content)
                     refined += 1
                     tui.event("memory_tidy",
@@ -152,16 +149,20 @@ def _cmd_memory_tidy(tui: TUI, memory: MemoryClient, llm_callback) -> None:
                 merge_into = d.get("merge_into", "")
                 if merge_into and merge_into != nid:
                     # Append content to target, then delete source
-                    engine = memory._mem._engine
-                    if nid in engine.graph.nodes and merge_into in engine.graph.nodes:
-                        target_content = engine.graph.nodes[merge_into].get("content", "")
+                    source_node = next((node for node in nodes if node["id"] == nid), None)
+                    target_node = next(
+                        (node for node in nodes if node["id"] == merge_into), None
+                    )
+                    if source_node and target_node:
+                        target_content = target_node.get("content", "")
                         merged_content = target_content + "\n\n" + new_content if new_content else target_content
-                        engine.update_node(merge_into, content=merged_content)
-                        engine.delete_node(nid)
-                        engine.save()
-                        merged += 1
-                        tui.event("memory_tidy",
-                                  f"  🔗 Merged: {nid[:8]}... → {merge_into[:8]}... — {reason[:60]}")
+                        if (
+                            memory.update_by_id(merge_into, content=merged_content)
+                            and memory.delete_by_id(nid)
+                        ):
+                            merged += 1
+                            tui.event("memory_tidy",
+                                      f"  🔗 Merged: {nid[:8]}... → {merge_into[:8]}... — {reason[:60]}")
 
             elif action == "delete" and nid:
                 if memory.delete_by_id(nid):
@@ -265,7 +266,7 @@ def main():
     sub.add_parser("tools", help="List available tools")
 
     # history
-    hist = sub.add_parser("history", help="View evolution history")
+    sub.add_parser("history", help="View evolution history")
 
     args = parser.parse_args()
 
@@ -307,7 +308,7 @@ def cmd_chat(args):
     if args.model:
         config.model.default = args.model
 
-    memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
+    memory = MemoryClient.from_config(config.memory) if config.memory.enabled else None
     learner = Learner(config)
     improver = Improver(config)
 
@@ -362,7 +363,7 @@ def cmd_chat(args):
                     tui.event("improver_done", f"✓ Auto-patched: {improvement.explanation[:100]}")
                 else:
                     tui.event("improver_detail", f"Patch attempt: {improvement.explanation[:100]}")
-        except Exception as e:
+        except Exception:
             # Learning should never crash the chat
             pass
 
@@ -377,7 +378,8 @@ def cmd_chat(args):
         return
 
     # Interactive mode
-    import os, json
+    import os
+    import json
     from datetime import datetime
 
     # Session history — persisted to ~/.panda/sessions/
@@ -536,7 +538,7 @@ def cmd_evolve(args):
 def cmd_memory(args):
     """Handle memory command."""
     config = load_config()
-    client = MemoryClient(url=config.memory.graph_url)
+    client = MemoryClient.from_config(config.memory)
 
     if args.action == "search":
         if not args.query:

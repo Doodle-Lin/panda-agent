@@ -1,11 +1,6 @@
 """Tests for Windows path detection and TOOL_CALL stripping in answer."""
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 from panda_agent.brain import build_system_prompt
 from panda_agent.tools import get_tool_descriptions
-import re
 
 
 class TestWindowsPathDetection:

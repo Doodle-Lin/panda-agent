@@ -8,16 +8,12 @@ Prerequisites:
 - Network access to an OpenAI-compatible API endpoint
 - Temp directory for file creation tests
 """
-import sys, os, tempfile, shutil, time
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 import pytest
+from panda_agent.config import load_config
+from panda_agent.react import run_react
+
 
 pytestmark = pytest.mark.slow
-
-from panda_agent.config import load_config
-from panda_agent.react import run_react, _compress_messages, _estimate_tokens
 
 # Skip all if no API key
 try:
@@ -86,7 +82,7 @@ class TestE2EContextCompression:
         result = run_react(task, config)
 
         assert result.success, f"Agent failed: {result.error}"
-        assert target.exists(), f"File not created"
+        assert target.exists(), "File not created"
         # Agent should have used at least 2 tools
         assert len(result.tool_calls) >= 2, f"Expected ≥2 tool calls, got {len(result.tool_calls)}"
 
@@ -134,6 +130,6 @@ class TestE2EChineseInput:
         result = run_react(task, config)
 
         assert result.success, f"Agent failed on Chinese input: {result.error}"
-        assert target.exists(), f"File not created"
+        assert target.exists(), "File not created"
         content = target.read_text(encoding="utf-8")
         assert "你好" in content or "测试" in content, f"Chinese content missing: {content[:200]}"

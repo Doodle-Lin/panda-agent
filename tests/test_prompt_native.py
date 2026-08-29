@@ -3,10 +3,6 @@
 Native FC handles tool calling — prompt should NOT teach TOOL_CALL: text format.
 Should still teach DONE:/FAILED: for task completion signaling.
 """
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 from panda_agent.brain import build_system_prompt
 
 
@@ -27,7 +23,7 @@ class TestPromptNativeFC:
 
     def test_failed_instruction_present(self):
         """Prompt must still teach FAILED: for giving up."""
-        prompt = build_system_descriptor = build_system_prompt("test tools")
+        prompt = build_system_prompt("test tools")
         assert "FAILED:" in prompt, \
             "Prompt must contain FAILED: for failure signaling"
 

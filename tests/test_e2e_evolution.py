@@ -5,9 +5,7 @@ Run 2: same task, memory injected → agent should be faster/fewer turns.
 
 This is the ultimate proof that self-evolution works.
 """
-import sys, os, time, tempfile
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
+import time
 
 import pytest
 from panda_agent.config import load_config
@@ -29,8 +27,6 @@ class TestE2ESelfEvolution:
 
         # Use a task that involves tool calls (so memory has something to learn from)
         task = "List the files in the current directory and tell me how many Python files there are"
-        tmpdir = tempfile.mkdtemp()
-        test_file = os.path.join(tmpdir, "test_evolution_e2e.py")
 
         memory = MemoryClient(url=config.memory.graph_url) if config.memory.enabled else None
         learner = Learner(config)
@@ -69,7 +65,7 @@ class TestE2ESelfEvolution:
 
         # Second run should be faster or use fewer turns
         # (memory injected → agent knows what to do without exploring)
-        print(f"\n=== Self-Evolution E2E Results ===")
+        print("\n=== Self-Evolution E2E Results ===")
         print(f"Run 1: {run1_turns} turns, {run1_time:.1f}s")
         print(f"Run 2: {run2_turns} turns, {run2_time:.1f}s")
         print(f"Improvement: {run1_time - run2_time:.1f}s faster, {run1_turns - run2_turns} fewer turns")

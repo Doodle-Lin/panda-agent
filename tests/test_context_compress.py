@@ -11,11 +11,7 @@ No LLM-based summarization (too expensive for a CLI tool). Instead:
 - When total exceeds threshold, truncate oldest tool results
 - Keep system prompt + recent 6 turns intact
 """
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
-from panda_agent.react import _estimate_tokens, _compress_messages, MAX_STEPS_PROMPT
+from panda_agent.react import _estimate_tokens, _compress_messages
 
 
 class TestTokenEstimation:

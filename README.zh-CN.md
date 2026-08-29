@@ -405,6 +405,10 @@ pytest tests/ -q          # 198 个 pytest 用例
 
 欢迎贡献，特别是 R1 和 R2 —— 那是「demo」和「工具」的分界线。
 
+本地与远端贡献者必须遵循 [CONTRIBUTING.md](CONTRIBUTING.md) 中的可执行协作
+harness：每个参与者使用独立分支和 worktree，并通过历史血缘、Conventional
+Commits 与推送前验证，避免陈旧或重叠改动静默覆盖他人的工作。
+
 ```bash
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent

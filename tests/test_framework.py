@@ -3,19 +3,16 @@
 Uses mocks for LLM calls — no real API needed.
 """
 
-import pytest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from panda_agent.types import (
-    Task, ExecutionResult, Evaluation, ImprovementResult,
-    RoundResult, EvolutionResult, Event,
+    Task, ExecutionResult, Evaluation, EvolutionResult, Event,
 )
 from panda_agent.config import Config, ModelConfig, load_config, save_config
-from panda_agent.llm import call_llm, call_llm_simple
+from panda_agent.llm import call_llm
 from panda_agent.brain import build_system_prompt, SYSTEM_PROMPT, max_turns_for_task
 from panda_agent.tools import TOOLS, execute_tool, get_tool_descriptions
-from panda_agent.react import run_react, _parse_tool_call, _parse_done, _parse_failed
+from panda_agent.react import _parse_tool_call, _parse_done, _parse_failed
 from panda_agent.memory import MemoryClient
 
 

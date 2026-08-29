@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -34,7 +33,8 @@ class AgentConfig:
 @dataclass
 class MemoryConfig:
     enabled: bool = True
-    graph_url: str = "http://127.0.0.1:9121"
+    graph_url: str = "embedded://"
+    storage_path: str = ""
     auto_write: bool = True
 
 
@@ -137,6 +137,7 @@ def save_config(cfg: Config) -> None:
         "memory": {
             "enabled": cfg.memory.enabled,
             "graph_url": cfg.memory.graph_url,
+            "storage_path": cfg.memory.storage_path,
             "auto_write": cfg.memory.auto_write,
         },
         "evolution": {
@@ -173,7 +174,8 @@ agent:
 
 memory:
   enabled: true
-  graph_url: http://127.0.0.1:9121
+  graph_url: embedded://
+  storage_path: ""  # empty = $PANDA_HOME/memory/memory.sqlite3
   auto_write: true
 
 evolution:

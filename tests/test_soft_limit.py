@@ -7,10 +7,6 @@ Inspired by opencode's max-steps.ts:
 
 panda's version: simpler, injects prompt and gives LLM one final turn.
 """
-import sys, os
-sys.path.insert(0, r'E:\workspace\evo-agent\src')
-os.environ['PANDA_HOME'] = os.path.expanduser('~/.panda')
-
 from panda_agent.react import run_react, MAX_STEPS_PROMPT
 from panda_agent.llm import LLMResponse
 from panda_agent.config import Config, AgentConfig, ModelConfig, MemoryConfig
@@ -64,7 +60,7 @@ class TestSoftLimit:
         with patch("panda_agent.react.call_llm_detailed", side_effect=fake), \
              patch("panda_agent.brain.max_turns_for_task", return_value=3), \
              patch("panda_agent.react.max_turns_for_task", return_value=3):
-            result = run_react("zzz unknown task", config)
+            run_react("zzz unknown task", config)
 
         # The salvage LLM call (last call) should contain MAX_STEPS_PROMPT
         last_call_messages = fake.calls[-1]

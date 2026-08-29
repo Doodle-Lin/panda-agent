@@ -4,32 +4,27 @@ Each test ensures a specific bug that was fixed does not reappear.
 These are the "insurance policy" tests — they lock in past fixes.
 """
 
-import re
 import sys
-import os
-import json
 import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from panda_agent.react import (
     run_react, _parse_tool_call, _parse_done, _parse_failed,
-    _classify_error, _self_repair,
+    _classify_error,
 )
-from panda_agent.llm import LLMResponse, call_llm_detailed
-from panda_agent.brain import build_system_prompt, max_turns_for_task, should_retry
-from panda_agent.tools import execute_tool, get_tool_descriptions
+from panda_agent.llm import LLMResponse
+from panda_agent.brain import max_turns_for_task, should_retry
+from panda_agent.tools import execute_tool
 from panda_agent.config import Config, ModelConfig, AgentConfig, MemoryConfig
 from panda_agent.types import (
-    Task, ExecutionResult, Evaluation, ExecutionTrace, TurnRecord,
+    ExecutionTrace,
 )
 from panda_agent.orchestrator import (
     _extract_patch, _replace_function,
-    Evaluator, Learner, Improver,
 )
 
 
@@ -75,10 +70,10 @@ class TestRegressionToolCallPriority:
         """When response has both TOOL_CALL and DONE, TOOL_CALL wins."""
         text = 'TOOL_CALL: {"name": "list_files", "args": {"path": "."}}\nDONE: finished'
         tool = _parse_tool_call(text)
-        done = _parse_done(text)
         # Both can parse, but react.py checks tool_call first
         assert tool is not None
         assert tool["name"] == "list_files"
+        assert _parse_done(text) == "finished"
         # Verify the priority logic by checking tool_call is found first
         # (in react.py, _parse_tool_call is called before _parse_done)
 
@@ -367,7 +362,7 @@ class TestRegressionMemoryInjection:
             return LLMResponse(content="DONE: done", reasoning="")
 
         with patch("panda_agent.react.call_llm_detailed", side_effect=capture_call):
-            result = run_react("list files", config, memory=mock_memory)
+            run_react("list files", config, memory=mock_memory)
 
         # System prompt should contain memory context
         assert len(captured_messages) > 0

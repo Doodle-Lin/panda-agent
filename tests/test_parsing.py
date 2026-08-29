@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from panda_agent.parsing import (
-    EvalParseResult,
     extract_json_blocks,
     parse_evaluation,
     parse_json_object,

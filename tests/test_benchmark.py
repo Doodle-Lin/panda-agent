@@ -8,7 +8,6 @@ deleted or weakened, the evolution loop silently reverts to being open-loop.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 import yaml
@@ -16,7 +15,6 @@ import yaml
 from panda_agent.benchmark import (
     BenchmarkResult,
     BenchmarkTask,
-    GateResult,
     TaskScore,
     check_no_regression,
     estimate_noise,

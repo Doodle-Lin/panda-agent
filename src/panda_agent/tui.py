@@ -11,12 +11,7 @@ from __future__ import annotations
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.markdown import Markdown
-from rich.syntax import Syntax
 from rich.prompt import Prompt
-from rich.text import Text
-from rich.live import Live
-from rich.spinner import Spinner
 
 
 class TUI:
@@ -73,7 +68,7 @@ class TUI:
             else:
                 self.console.print(f"  [blue]{message}[/]")
         elif event_type == "done":
-            self.console.print(f"  [green]✓ Done[/]")
+            self.console.print("  [green]✓ Done[/]")
         elif event_type == "failed":
             self.console.print(
                 Panel(message, title="[red]Failed[/]", border_style="red")
