@@ -497,6 +497,12 @@ Recent changes and the reasoning behind them: [CHANGELOG.md](CHANGELOG.md).
 Contributions welcome, particularly on R1 and R2 — those are the difference
 between a demo and a tool.
 
+Local and remote contributors must follow the executable collaboration harness
+in [CONTRIBUTING.md](CONTRIBUTING.md). It uses actor-owned branches, separate
+worktrees, lineage checks, Conventional Commits, and pre-push verification to
+prevent stale or overlapping work from silently replacing another contributor's
+changes.
+
 ```bash
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent

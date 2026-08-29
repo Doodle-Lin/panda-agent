@@ -1,0 +1,5 @@
+#!/bin/sh
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 scripts/harness.py hook-pre-push "$@"
+fi
+exec python scripts/harness.py hook-pre-push "$@"
