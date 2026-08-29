@@ -41,3 +41,8 @@ Open a pull request and hand off the commit SHA, changed paths, verification
 output, and known risks. See
 [`docs/COLLABORATION_HARNESS.md`](docs/COLLABORATION_HARNESS.md) for conflict,
 force-push, ownership, and recovery procedures.
+
+While the repository has one write-capable maintainer, the `master` ruleset
+uses solo-maintainer mode: the pull request author may merge after the required
+`quality` check passes. Before adding another write-capable collaborator,
+switch the ruleset to the documented multi-contributor approval gate.
