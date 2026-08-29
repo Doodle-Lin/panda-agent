@@ -34,6 +34,10 @@ The canonical collaboration protocol is
 10. Local hooks are not a security boundary. The GitHub ruleset described in
     the collaboration protocol is required to prevent direct pushes and force
     rewrites on the server.
+11. The repository currently uses the protocol's solo-maintainer mode: pull
+    requests, the `quality` check, linear history, and no-force-push rules
+    remain mandatory, while independent approval is disabled. Restore the
+    multi-contributor approval gate before granting another actor write access.
 
 ## Product invariants
 

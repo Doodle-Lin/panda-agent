@@ -171,15 +171,30 @@ and reviews the commit range. Do not transfer uncommitted files manually.
 Local hooks can be bypassed. Configure a repository ruleset for `master` with:
 
 - pull requests required;
-- at least one independent approval;
 - approvals dismissed after new commits;
 - conversation resolution required;
 - required status checks for non-slow tests, lint, and harness doctor;
 - branch required to be up to date before merge;
 - linear history required;
 - force pushes and deletions blocked;
-- administrators and automation included, with a narrowly audited emergency
-  bypass role only if operationally necessary.
+- administrators and automation included, with no standing bypass role.
+
+### Solo-maintainer mode (current)
+
+When exactly one person has write access, require zero approvals and disable
+"approval of the most recent push." The owner still opens a pull request and
+may merge it only after the required `quality` check passes. This keeps the
+reviewable change record, green CI gate, linear history, and server-side
+protection against accidental direct or force pushes without creating an
+impossible self-approval requirement.
+
+### Multi-contributor mode
+
+Before granting another person or agent write access, change the ruleset to
+require at least one independent approval and approval of the most recent
+push. Keep stale-approval dismissal and conversation resolution enabled. Do
+not grant a permanent administrator or automation bypass; use a narrowly
+audited emergency role only when operationally necessary.
 
 Until those server rules exist, the repository is protected by convention and
 local hooks, not by a hard remote boundary.
