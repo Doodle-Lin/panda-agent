@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-198%20passing-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-365%20passing-brightgreen.svg)](#测试)
 
 [English](README.md) · **简体中文**
 
@@ -54,11 +54,12 @@
 | CLI + TUI | ✅ 可用 | `panda`、`panda chat -q`、`panda evolve -t` |
 | **回归门禁** | ✅ 可用 | 可选门禁，拒绝实测任务表现退化的补丁 |
 | **执行边界** | ✅ 可用 | 命令白名单 + 工作区隔离 |
-| 图记忆 | 🟡 可选 | 需要外部服务；缺失时优雅降级 |
-| 进化历史 → 记忆 | 🔴 未做 | Improver 不会从历史补丁的成败中学习 |
+| 图记忆 | ✅ 可用 | 内嵌 SQLite 图存储，持久化且零额外依赖 |
+| 进化历史 → 记忆 | ✅ 可用 | 任务经验与补丁成败会持久化并可检索 |
 | 操作系统级沙箱 | 🟡 部分 | 有白名单和路径边界，但无内核隔离。见[安全](#安全) |
 
-**测试：198 个 pytest 用例**，覆盖解析、补丁、benchmark、orchestrator 和安全边界。
+**当前发布评估：365 passed，6 skipped**，覆盖解析、补丁、benchmark、记忆、
+orchestrator 和安全边界。被跳过的测试需要配置真实 LLM 服务商。
 
 跑在你在意的东西上之前，请先读[已知限制](#已知限制)。
 
@@ -108,8 +109,10 @@ agent:
   max_retries: 3
 
 memory:
-  enabled: true                           # 服务不可用时会优雅降级
-  graph_url: "http://127.0.0.1:9121"
+  enabled: true
+  graph_url: "embedded://"                # 默认：内嵌 SQLite 图存储
+  storage_path: ""                        # 默认：$PANDA_HOME/memory/memory.sqlite3
+  auto_write: true
 
 evolution:
   improve_tools: true
@@ -244,16 +247,19 @@ Improver 总会检查单元测试；要同时拒绝让 Agent 在代表性任务�
 
 ## 图记忆
 
-可选的联想记忆，后端是外部图服务。`MemoryClient` 用嵌入相似度加 Personalized PageRank 扩散来检索相关知识。
+可选的联想记忆已内嵌为持久化 SQLite 图存储。它使用兼容中英文的词法评分、
+自动图连接和一跳传播来检索相关知识，不依赖旁路服务或私有兄弟仓库。
 
 ```yaml
 memory:
   enabled: true
-  graph_url: "http://127.0.0.1:9121"
+  graph_url: "embedded://"  # 默认
+  storage_path: ""          # 默认：$PANDA_HOME/memory/memory.sqlite3
   auto_write: true      # 自动持久化任务结果
 ```
 
-服务不可用时，`retrieve` 返回 `[]`，`write` 返回错误字典；记忆始终是可选增强。图服务没有打包进来，路线图里计划提供参考实现（见[路线图](#路线图)）。
+为兼容旧部署，`MemoryClient` 仍可使用显式配置的 HTTP 记忆服务。内嵌后端是默认值；
+设置 `memory.enabled: false` 可完全禁用记忆读写。
 
 ---
 
@@ -295,7 +301,7 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 **没有提示词注入防御。** 文件内容和命令输出直接回灌进对话。一个含有对抗性指令的文件仍然可以引导循环；边界能限制损害范围，但不能识别攻击意图。
 
-安全问题欢迎通过 GitHub issue 反馈。
+安全问题请遵循 [SECURITY.md](SECURITY.md)，不要在公开 issue 中披露利用细节。
 
 ---
 
@@ -303,11 +309,11 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 这些限制会影响你决定在哪些场景使用它：
 
-### 🔴 Improver 不从自己的历史里学习
+### 🟡 自进化仍需真实服务商证据
 
-每次改进都从零开始。循环知道第 3 轮打了 72 分，但不知道第 1 轮已经试过类似的补丁并且被拒了。每个补丁的结果 —— 接受、拒绝、以及为什么 —— 全部丢弃。
-
-这是**剩下最大的缺口，也是最有意思的一个**：图记忆已经能提供任务上下文、也能被工具访问，但补丁结果还没有被记录进去。把这些结果喂进去，Improver 就能积累关于「怎么改这个代码库」的元知识，而不只是「怎么做这个任务」。见路线图 R1。
+任务经验以及接受/拒绝补丁的结果会写入记忆，但没有配置服务商 API key 时，
+真实 LLM 集成测试会跳过。将循环用于实际工作负载前，请对选定模型运行有代表性的
+benchmark，并保留轨迹、成本和失败模式。
 
 ### 🟡 benchmark 门禁需要有任务集才有意义
 
@@ -321,9 +327,10 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 如果响应里没有 `TOOL_CALL`、没有 `DONE:`，长度超过 20 字符，且不以 "Continue" 开头，就被当作最终答案（[`react.py`](src/panda_agent/react.py)）。这个逻辑存在是因为有些模型不输出 `DONE:` 前缀，但一个正在「想出声」的模型会被误判为已完成。结构化输出能消除这种猜测。
 
-### 🟡 图记忆需要外部服务
+### 🟡 内嵌记忆是词法检索，不是向量语义检索
 
-`memory.enabled: true` 期待一个旁路服务。没有它，框架优雅降级而不是崩溃 —— 但这个特性实际上是关闭的，直到你自己提供一个。见路线图 R4。
+内嵌后端优先保证零额外依赖和可移植性，评分兼容中英文，但不能替代针对工作负载
+调优的嵌入检索器。只有在运营成本和数据隐私都可接受时才配置 HTTP 后端。
 
 ---
 
@@ -331,17 +338,10 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 按「对项目真正有用」的程度排序。
 
-### R1 —— 把进化历史喂进图记忆 🔴
+### R1 —— 用真实工作负载验证进化记忆 🟡
 
-**剩下最有意思的活。** 现在每个补丁的结果都被丢掉；存下来，循环就从「瞎试」变成「不试已经失败过的」：
-
-- 每次尝试存成一个节点：目标函数、补丁 diff、分数变化、接受/拒绝、拒绝原因
-- 生成补丁前先查：把同一个函数上过往尝试的结果给 Improver
-- 把积累的知识显式呈现出来，例如：
-  `✅ 已接受 (+6.2)：给 search_files 输出加了行号`
-  `❌ 已拒绝 (-8.1)：改成 JSON 输出，LLM 反而更难解析`
-
-**这才是「自我改进」而非「自我修改」的分界线**：它学的是怎么改自己，不只是怎么做任务。
+任务经验和补丁结果已经持久化。下一步是在支持的模型服务商上证明检索这些记忆
+能改善有代表性的任务，并公开轨迹、分数变化、成本和失败模式。
 
 ### R2 —— 在独立 checkout 里验证补丁 🔴
 
@@ -351,9 +351,10 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 
 白名单管得住哪些程序能跑，管不住 `python3` 跑起来之后干什么。给命令工具和测试执行加容器或 `seccomp`/`nsjail`。
 
-### R4 —— 打包一个参考图记忆服务 🟡
+### R4 —— 增加可选的语义检索后端 🟡
 
-内置一个最小的嵌入 + PageRank 实现，让 `memory.enabled: true` 开箱可用，而不是依赖一个没打包的外部服务。
+保持内嵌 SQLite 图存储作为可移植默认值；只有在有可复现实验和清晰的数据处理说明后，
+才提供可选语义后端。
 
 ### R5 —— 可观测性 🟢
 
@@ -379,19 +380,12 @@ read_file "a/../../../etc/passwd"           # 拒绝：越出工作区
 ## 测试
 
 ```bash
-pytest tests/ -q          # 198 个 pytest 用例
+python -m pytest tests/ -q
 ```
 
-| 文件 | 测试函数数 | 覆盖 |
-|---|---|---|
-| `test_framework.py` | 32 | types、config、brain、tools、ReAct 解析、LLM、memory |
-| `test_security.py` | 32 | 命令注入、路径穿越、环境变量清理 |
-| `test_benchmark.py` | 29 | 打分器、加权、门禁决策、噪声估计 |
-| `test_parsing.py` | 28 | JSON 提取、撇号处理、解析失败语义 |
-| `test_patching.py` | 22 | 装饰器、async、嵌套、类方法、常量替换 |
-| `test_orchestrator.py` | 20 | 补丁保留/回滚/因退化被拒、Evaluator 重试、循环计分 |
-
-表中统计的是测试函数；参数化测试展开后，pytest 收集到的用例总数是 198。
+当前干净环境评估为 **365 passed，6 skipped**。测试覆盖解析、补丁、benchmark
+门禁、持久化记忆、orchestrator 和安全边界。用例数会随回归覆盖增加而变化；
+以 GitHub Actions 的 `quality` 检查为准。
 
 测试套件也覆盖曾经出过问题的行为，尤其是 `test_patch_that_passes_tests_but_degrades_is_rejected`。
 
@@ -412,8 +406,8 @@ Commits 与推送前验证，避免陈旧或重叠改动静默覆盖他人的工
 ```bash
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent
-pip install -e ".[test]"
-pytest tests/
+pip install -e ".[dev]"
+python scripts/harness.py verify
 ```
 
 约定：
@@ -421,10 +415,11 @@ pytest tests/
 - **行为变更必须配测试。** 特别是碰到进化循环或补丁应用的部分。
 - **不要为了让补丁通过而削弱验证门禁。** 如果门禁本身不对，那就明确地修门禁，并说明理由。
 - **不要删掉回归测试来让改动通过。** 有些测试专门钉住曾经坏过的行为。
-- **保持记忆可选。** 图服务缺失时优雅降级是硬要求。
+- **保持记忆可选。** 内嵌后端是默认值，但必须持续支持关闭记忆。
 - **文档跟代码同步。** 行为变了，同一个 PR 里更新 README（中英两份）。
 
-适合入手的：R4（打包参考记忆服务）和 R5（可观测性）比较独立。R1 是这个项目真正差异化的部分，想做点有意思的可以从它开始。
+适合入手的：R4（语义检索评估）和 R5（可观测性）比较独立。R1 是这个项目真正
+差异化的部分：证明跨任务学习能带来可重复、可测量的收益。
 
 ---
 

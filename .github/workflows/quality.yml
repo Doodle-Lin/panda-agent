@@ -29,3 +29,9 @@ jobs:
 
       - name: Verify collaboration and quality gates
         run: python scripts/harness.py verify
+
+      - name: Build distribution packages
+        run: python -m build
+
+      - name: Validate distribution metadata
+        run: python -m twine check dist/*

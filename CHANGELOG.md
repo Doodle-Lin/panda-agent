@@ -3,6 +3,18 @@
 All notable changes to PandaAgent. The format is based on
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- MIT license and community health files: security reporting guidance, code of
+  conduct, support guidance, issue forms, and a pull-request template.
+
+### Changed
+
+- Updated English and Chinese documentation for the embedded SQLite graph
+  memory, current test baseline, and the remaining self-evolution limitations.
+
 ## [0.2.0] — 2025
 
 Self-evolution becomes falsifiable: patches are gated on measured task
