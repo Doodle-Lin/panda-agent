@@ -5,7 +5,7 @@ keeps a rewrite that measurably helped.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-198%20passing-brightgreen.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-365%20passing-brightgreen.svg)](#tests)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 **English** · [简体中文](README.zh-CN.md)
@@ -60,12 +60,13 @@ verification gate before it's kept.
 | CLI + TUI | ✅ Working | `panda`, `panda chat -q`, `panda evolve -t` |
 | **Regression gate** | ✅ Working | Optional gate rejects measured task regressions |
 | **Execution boundaries** | ✅ Working | Command allowlist + workspace containment |
-| Graph memory | 🟡 Optional | Requires external server; degrades gracefully |
-| Evolution history → memory | 🔴 Not built | Improver does not learn from past patch outcomes |
+| Graph memory | ✅ Working | Embedded SQLite graph; persistent and dependency-free |
+| Evolution history → memory | ✅ Working | Task lessons and patch outcomes are persisted and retrievable |
 | OS-level sandbox | 🟡 Partial | Allowlist + path containment, but no kernel isolation. See [Security](#security) |
 
-**Test suite: 198 pytest cases** across parsing, patching, benchmarking, the
-orchestrator, and the security boundary.
+**Current release evaluation: 365 passed, 6 skipped** across parsing, patching,
+benchmarking, memory, the orchestrator, and the security boundary. The skipped
+tests require a configured real LLM provider.
 
 Read [Known Limitations](#known-limitations) before running this on anything
 you care about.
@@ -122,8 +123,10 @@ agent:
   max_retries: 3
 
 memory:
-  enabled: true                           # unavailable service is handled gracefully
-  graph_url: "http://127.0.0.1:9121"
+  enabled: true
+  graph_url: "embedded://"                # default: bundled SQLite graph
+  storage_path: ""                        # default: $PANDA_HOME/memory/memory.sqlite3
+  auto_write: true
 
 evolution:
   improve_tools: true
@@ -279,20 +282,22 @@ breaking callers.
 
 ## Graph Memory
 
-Optional associative memory backed by an external graph server. `MemoryClient`
-uses embedding similarity plus Personalized PageRank diffusion to retrieve
-related knowledge.
+Optional associative memory is bundled as a persistent SQLite graph. It uses a
+portable lexical scorer for CJK and Latin text, automatic graph links, and
+one-hop propagation to retrieve related knowledge. No sidecar service or
+private sibling repository is required.
 
 ```yaml
 memory:
   enabled: true
-  graph_url: "http://127.0.0.1:9121"
+  graph_url: "embedded://"  # default
+  storage_path: ""          # $PANDA_HOME/memory/memory.sqlite3 by default
   auto_write: true      # persist task outcomes automatically
 ```
 
-If the server is unavailable, `retrieve` returns `[]` and `write` returns an
-error dictionary; memory remains optional. The graph server is not bundled;
-bundling a reference implementation is on the [Roadmap](#roadmap).
+For compatibility, `MemoryClient` can still use an explicitly configured HTTP
+memory service. The embedded backend is the default and remains optional: set
+`memory.enabled: false` to disable retrieval and writes.
 
 ---
 
@@ -351,7 +356,8 @@ checkout. See Roadmap R2.
 back into the conversation. A file containing adversarial instructions can still
 steer the loop; the boundaries limit the damage, they don't detect the attempt.
 
-Security reports welcome via GitHub issues.
+For security reports, follow [SECURITY.md](SECURITY.md); do not disclose
+exploit details in a public issue.
 
 ---
 
@@ -359,17 +365,12 @@ Security reports welcome via GitHub issues.
 
 These limitations matter when deciding where to use the project:
 
-### 🔴 The Improver does not learn from its own history
+### 🟡 Self-evolution still needs real-provider evidence
 
-Every improvement attempt starts from zero. The loop knows that round 3 scored
-72, but not that a similar patch was already tried and rejected in round 1. The
-outcome of each patch — accepted, rejected, and why — is discarded.
-
-This is the largest remaining gap, and the most interesting one: graph memory
-already exists for task context and tool access, but patch outcomes are not
-recorded there. Feeding those outcomes into it would let the Improver accumulate
-meta-knowledge about *how to modify this codebase*, not just how to do the task.
-See Roadmap R1.
+Task lessons and accepted/rejected patch outcomes are stored in memory, but the
+real LLM integration tests are skipped unless a provider API key is configured.
+Before relying on the loop for a workload, run a representative benchmark with
+your chosen model and keep the resulting traces, cost, and failure modes.
 
 ### 🟡 The benchmark gate needs a suite to be meaningful
 
@@ -392,11 +393,12 @@ and doesn't start with "Continue", it's treated as a final answer
 the `DONE:` prefix, but a model thinking out loud gets misread as finished.
 Structured output would remove the guesswork.
 
-### 🟡 Graph memory needs an external server
+### 🟡 Embedded memory is lexical, not vector semantic search
 
-`memory.enabled: true` expects a side-car service. Absent it, the framework
-degrades gracefully rather than failing — but the feature is effectively off
-until you supply one. See Roadmap R4.
+The bundled backend favors portability and zero extra dependencies. Its scoring
+works for CJK and Latin text but is not a replacement for a workload-tuned
+embedding retriever. Configure an HTTP backend only when its operational cost
+and privacy properties are acceptable.
 
 ---
 
@@ -404,22 +406,11 @@ until you supply one. See Roadmap R4.
 
 Ordered by impact on making this genuinely useful.
 
-### R1 — Feed evolution history into graph memory 🔴
+### R1 — Validate evolution memory with real workloads 🟡
 
-The most interesting remaining work. Every patch outcome is currently thrown
-away; storing it turns the loop from *"try things"* into *"try things you
-haven't already failed at"*:
-
-- Persist each attempt as a node: target function, patch diff, score delta,
-  accepted/rejected, rejection reason
-- Query it before generating: give the Improver the outcomes of past attempts on
-  the same function
-- Surface the accumulated knowledge, e.g.
-  `✅ accepted (+6.2): added line numbers to search_files output`
-  `❌ rejected (-8.1): switched to JSON output, harder for the LLM to parse`
-
-This is what makes the system self-improving rather than merely self-modifying:
-it learns how to modify itself, not just how to do the task.
+Task lessons and patch outcomes are persisted. The next step is to demonstrate
+that retrieving them improves representative tasks across supported model
+providers, with published traces, score deltas, cost, and failure modes.
 
 ### R2 — Verify patches in a separate checkout 🔴
 
@@ -434,10 +425,11 @@ The allowlist bounds which programs run; it cannot bound what `python3` does
 once running. Container or `seccomp`/`nsjail` execution for the command tool and
 the test runner.
 
-### R4 — Bundle a reference graph-memory server 🟡
+### R4 — Add an optional semantic retrieval backend 🟡
 
-Ship a minimal embedding + PageRank implementation so `memory.enabled: true`
-works out of the box instead of requiring an unbundled service.
+Keep the embedded SQLite backend as the portable default, then offer an
+opt-in semantic backend only with reproducible evaluation and a clear data
+handling story.
 
 ### R5 — Observability 🟢
 
@@ -468,20 +460,13 @@ over LLM opinion where you can get them.
 ## Tests
 
 ```bash
-pytest tests/ -q          # 198 pytest cases
+python -m pytest tests/ -q
 ```
 
-| File | Test functions | Covers |
-|---|---|---|
-| `test_framework.py` | 32 | types, config, brain, tools, ReAct parsing, LLM, memory |
-| `test_security.py` | 32 | command injection, path traversal, environment scrubbing |
-| `test_benchmark.py` | 29 | scorers, weighting, gate decisions, noise estimation |
-| `test_parsing.py` | 28 | JSON extraction, apostrophes, parse-failure semantics |
-| `test_patching.py` | 22 | decorators, async, nested, methods, constant replacement |
-| `test_orchestrator.py` | 20 | patch kept / reverted / rejected on regression, retries, scoring |
-
-The table counts test functions; parametrized tests bring the collected total to
-198 cases.
+The current clean-environment evaluation reports **365 passed, 6 skipped**.
+The suite covers parsing, patching, benchmark gates, persistent memory,
+orchestration, and security boundaries. The exact count changes as regression
+coverage grows; the `quality` GitHub Actions check is the source of truth.
 
 The suite includes regression coverage for behaviour that was once broken,
 notably `test_patch_that_passes_tests_but_degrades_is_rejected`.
@@ -506,8 +491,8 @@ changes.
 ```bash
 git clone https://github.com/Doodle-Lin/panda-agent.git
 cd panda-agent
-pip install -e ".[test]"
-pytest tests/          # 198 cases, ~2s
+pip install -e ".[dev]"
+python scripts/harness.py verify
 ```
 
 Guidelines:
@@ -520,13 +505,13 @@ Guidelines:
   specifically to pin behaviour that was once broken — notably
   `test_patch_that_passes_tests_but_degrades_is_rejected`, which is the whole
   reason the benchmark gate exists. If one blocks you, that is information.
-- **Keep memory optional.** Graceful degradation when the graph server is absent
-  is a hard requirement.
+- **Keep memory optional.** The embedded backend is the default, and disabling
+  memory must remain supported.
 - **Match docs to code.** If behavior changes, update this README in the same PR.
 
-Good first issues: R4 (bundle a reference memory server) and R5 (observability)
-are self-contained. R1 is the interesting one if you want to work on what makes
-this project distinctive.
+Good first issues: R4 (semantic retrieval evaluation) and R5 (observability)
+are self-contained. R1 is the distinctive work: demonstrating measurable,
+repeatable benefit from learning across tasks.
 
 ---
 
