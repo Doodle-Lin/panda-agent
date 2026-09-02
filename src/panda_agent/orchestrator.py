@@ -572,6 +572,47 @@ class Improver:
         self.last_reject_reason: str | None = None
         self.memory = MemoryClient.from_config(config.memory) if config.memory.enabled else None
         self.use_worktree: bool = False  # Set True to enable isolated verification
+        self._worktree_warning_emitted: bool = False
+
+    def _is_git_repo(self) -> bool:
+        """Return True when the project root is inside a git work tree."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=str(self.project_root),
+                capture_output=True, text=True, timeout=10,
+            )
+            return result.returncode == 0 and result.stdout.strip() == "true"
+        except Exception:
+            return False
+
+    def _warn_worktree_disabled_in_git_repo(self) -> str | None:
+        """Return a warning string when isolated verification is off in a git repo.
+
+        With ``use_worktree=False`` (the default) the test gate runs against
+        the working tree the agent can reach with its ``patch_file`` tool, so
+        a patch that weakens a test can pass the gate it is supposed to be
+        gated by. The worktree path runs the ORIGINAL tests from HEAD in a
+        separate checkout, making that structurally impossible.
+
+        This is a warning, not a hard failure: turning it on by default would
+        break non-git environments and the bundled toy suite, where the
+        isolation is not needed. Callers that care about the integrity of the
+        gate (any real evolution experiment) should set ``use_worktree=True``
+        and run inside a git repo.
+        """
+        if self.use_worktree or self._worktree_warning_emitted:
+            return None
+        if not self._is_git_repo():
+            return None
+        self._worktree_warning_emitted = True
+        return (
+            "use_worktree is False in a git repo: the test gate runs against "
+            "the working tree, which the agent can reach with patch_file. A "
+            "patch that weakens a test can pass its own gate. Set "
+            "Improver(use_worktree=True) for any evolution run whose "
+            "accept/reject decisions need to be trustworthy."
+        )
 
     def _verify_in_worktree(self, patched_source: str, source_path: Path) -> tuple[bool, str]:
         """Verify a patch in an isolated git worktree at HEAD.
@@ -610,6 +651,14 @@ class Improver:
 
     def improve(self, evaluation: Evaluation) -> ImprovementResult:
         """Generate and apply patches based on evaluation."""
+        # Surface the worktree-isolation gap once per run. This is a warning,
+        # not a gate: it tells the caller that accept/reject decisions made
+        # here are only as trustworthy as the test runner's isolation.
+        warning = self._warn_worktree_disabled_in_git_repo()
+        if warning:
+            import sys
+            print(f"[improver] WARNING: {warning}", file=sys.stderr)
+
         results = []
         # Try improving tools.py first
         if self.config.evolution.improve_tools:

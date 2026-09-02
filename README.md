@@ -352,6 +352,15 @@ code. The regression benchmark makes this harder — a weakened test does not
 improve benchmark score — but the correct fix is verifying in a separate
 checkout. See Roadmap R2.
 
+The `Improver` can verify patches in an isolated git worktree
+(`use_worktree=True`): it copies the patched source into a worktree checked
+out at `HEAD` and runs the *original* tests there, so a patch that weakens a
+test cannot pass the gate it is gated by. This is **opt-in and off by
+default** because it requires a git repo and breaks the bundled toy suite.
+When it is off and the project is a git repo, the Improver prints a warning
+on the first `improve()` call. Any evolution run whose accept/reject
+decisions need to be trustworthy should set `use_worktree=True`.
+
 **No prompt-injection defense.** File contents and command output feed straight
 back into the conversation. A file containing adversarial instructions can still
 steer the loop; the boundaries limit the damage, they don't detect the attempt.

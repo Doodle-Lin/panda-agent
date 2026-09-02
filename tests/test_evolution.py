@@ -585,6 +585,45 @@ class TestWorktreeVerification:
         passed, msg = improver._verify_in_worktree("x = 1\n", tmp_path / "src" / "test.py")
         assert passed is True  # fail open for non-git
 
+    def test_worktree_warning_not_emitted_when_enabled(self, tmp_path):
+        """With use_worktree=True the warning is suppressed regardless of git."""
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        improver.use_worktree = True
+        improver._worktree_warning_emitted = False
+        assert improver._warn_worktree_disabled_in_git_repo() is None
+
+    def test_worktree_warning_not_emitted_in_non_git_dir(self, tmp_path):
+        """In a non-git directory the warning is not surfaced: the isolation
+        gap only matters when there IS a repo to isolate against."""
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        improver.use_worktree = False
+        improver._worktree_warning_emitted = False
+        # tmp_path is not a git work tree, so no warning.
+        assert improver._warn_worktree_disabled_in_git_repo() is None
+
+    def test_worktree_warning_emitted_once_in_git_repo(self, tmp_path, monkeypatch):
+        """In a git repo with use_worktree off, the warning fires exactly once."""
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        improver.use_worktree = False
+        improver._worktree_warning_emitted = False
+        # Force _is_git_repo to True so this runs without a real repo.
+        monkeypatch.setattr(improver, "_is_git_repo", lambda: True)
+
+        first = improver._warn_worktree_disabled_in_git_repo()
+        assert first is not None
+        assert "use_worktree" in first
+        # Second call is suppressed (emitted-once).
+        assert improver._warn_worktree_disabled_in_git_repo() is None
+
 
 # ---------------------------------------------------------------------------
 # Phase 5: Evaluator — deterministic benchmark scorer + LLM consistency check
