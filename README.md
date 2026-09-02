@@ -278,6 +278,16 @@ weighted score 100 → 89.3, now rejected.
 Function signatures are kept stable so the Improver can rewrite bodies without
 breaking callers.
 
+> **Honest scope note.** In practice the "mind" surface that actually moves
+> the benchmark needle today is `SYSTEM_PROMPT`: it shapes every tool call.
+> `should_retry` and `max_turns_for_task` are keyword-list heuristics whose
+> bodies the Improver *can* rewrite, but the payoff per patch is small and
+> they rarely show up as the root cause in an evaluation. Treat "evolve the
+> mind" as "evolve the prompt" for now; the decision-logic surface is
+> intentionally narrow so patches stay safe. Expanding it (a planner, a
+> tool-selection policy, a reflection step) is on the roadmap, not in the
+> current loop.
+
 ---
 
 ## Graph Memory
@@ -415,11 +425,14 @@ and privacy properties are acceptable.
 
 Ordered by impact on making this genuinely useful.
 
-### R1 — Validate evolution memory with real workloads 🟡
+### R1 — Validate evolution with real workloads 🟡
 
-Task lessons and patch outcomes are persisted. The next step is to demonstrate
-that retrieving them improves representative tasks across supported model
-providers, with published traces, score deltas, cost, and failure modes.
+Task lessons and patch outcomes are persisted, and the bundled experiment
+runner (`scripts/run_experiment.py`) now produces a reproducible report with
+per-round scores, accept/reject reasons, and a held-out generalisation
+delta. The missing piece is published runs: traces, score deltas, cost,
+and failure modes across supported model providers, so the loop's effect is
+a number someone else can check rather than an assertion.
 
 ### R2 — Verify patches in a separate checkout 🔴
 
