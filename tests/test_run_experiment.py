@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -25,7 +24,6 @@ if str(_REPO_ROOT / "scripts") not in sys.path:
 from run_experiment import (  # type: ignore[import-not-found]
     ExperimentReport,
     _EVOLVABLE,
-    _restore_evolvable,
     _snapshot_evolvable,
     run_experiment,
 )
