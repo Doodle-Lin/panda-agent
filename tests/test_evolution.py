@@ -649,6 +649,70 @@ class TestEvaluatorDeterministicScorer:
         # LLM MUST be called since no benchmark matched
         assert mock_llm.call_count >= 1
 
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_benchmark_id_routes_deterministically(self, mock_llm):
+        """An explicit Task.benchmark_id routes to the named benchmark task's
+        scorer even when the instruction text is completely different.
+
+        This is the fix for the substring-matching fragility: a real task
+        phrased differently from the benchmark still gets the objective
+        scorer, and the LLM is never consulted.
+        """
+        bt = BenchmarkTask(
+            id="search-todos",
+            instruction="Find every TODO under src/ and list them.",
+            scorer="exact_match",
+            expected={"contains": ["config.py", "7"]},
+        )
+        config = Config()
+        evaluator = Evaluator(
+            config,
+            benchmark_tasks=[bt],
+            workspace=Path("."),
+        )
+        # Note: instruction shares no substring with bt.instruction.
+        task = Task(
+            instruction="Audit the codebase for outstanding work items.",
+            benchmark_id="search-todos",
+        )
+        result = ExecutionResult(
+            success=True,
+            tool_calls=[{"name": "search", "result": "config.py:7 TODO fix"}],
+        )
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        assert evaluation.score == 100.0
+        assert mock_llm.call_count == 0
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_benchmark_id_unknown_falls_back_to_substring(self, mock_llm):
+        """A benchmark_id that names no known benchmark task falls through to
+        the substring path, then to the LLM -- rather than silently scoring 0.
+        """
+        bt = BenchmarkTask(
+            id="real-id",
+            instruction="What is 2+2?",
+            scorer="exact_match",
+            expected={"contains": ["4"]},
+        )
+        mock_llm.return_value = '{"score": 50, "issues": []}'
+        config = Config()
+        evaluator = Evaluator(
+            config,
+            benchmark_tasks=[bt],
+            workspace=Path("."),
+        )
+        task = Task(instruction="unrelated", benchmark_id="nonexistent-id")
+        result = ExecutionResult(success=True, tool_calls=[])
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        assert evaluation.score == 50.0
+        assert mock_llm.call_count >= 1
+
 
 class TestEvaluatorConsistencyCheck:
     """Change 2: LLM consistency check — median of multiple runs, skip on high variance."""

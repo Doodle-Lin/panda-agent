@@ -113,30 +113,45 @@ class Evaluator:
         see :mod:`panda_agent.parsing` for why a default score is harmful.
         """
         # Change 1: deterministic benchmark scorer takes priority over LLM.
+        # Prefer an explicit benchmark_id on the Task (deterministic routing);
+        # fall back to substring matching only when none was supplied. The
+        # substring path is fragile -- a reworded task misses, and a vaguely
+        # worded one can match the wrong benchmark -- so callers should bind
+        # benchmark_id explicitly for any task where the objective scorer
+        # matters.
         if self.benchmark_tasks and self.workspace:
-            for bt in self.benchmark_tasks:
-                if bt.scorer in ("exact_match", "file_state") and (
-                    bt.instruction.strip() == task.instruction.strip()
-                    or bt.instruction.strip() in task.instruction.strip()
-                    or task.instruction.strip() in bt.instruction.strip()
-                ):
-                    answer = result.error or "completed"
-                    if result.success and result.tool_calls:
-                        # Use the last tool call's result as the answer
-                        answer = result.tool_calls[-1].get("result", answer)
-                    try:
-                        if bt.scorer == "exact_match":
-                            score = score_exact_match(bt, answer, self.workspace)
-                        else:
-                            score = score_file_state(bt, answer, self.workspace)
-                        return Evaluation(
-                            score=score,
-                            issues=[] if score >= 80 else [f"benchmark task '{bt.id}' scored {score:.0f}"],
-                            root_cause="" if score >= 80 else f"deterministic scorer: {bt.scorer}",
-                            suggested_changes="",
-                        )
-                    except Exception:
-                        pass  # fall through to LLM evaluation
+            by_id = {bt.id: bt for bt in self.benchmark_tasks}
+            matched: BenchmarkTask | None = None
+            if task.benchmark_id and task.benchmark_id in by_id:
+                matched = by_id[task.benchmark_id]
+            if matched is None:
+                for bt in self.benchmark_tasks:
+                    if bt.scorer in ("exact_match", "file_state") and (
+                        bt.instruction.strip() == task.instruction.strip()
+                        or bt.instruction.strip() in task.instruction.strip()
+                        or task.instruction.strip() in bt.instruction.strip()
+                    ):
+                        matched = bt
+                        break
+            if matched is not None:
+                bt = matched
+                answer = result.error or "completed"
+                if result.success and result.tool_calls:
+                    # Use the last tool call's result as the answer
+                    answer = result.tool_calls[-1].get("result", answer)
+                try:
+                    if bt.scorer == "exact_match":
+                        score = score_exact_match(bt, answer, self.workspace)
+                    else:
+                        score = score_file_state(bt, answer, self.workspace)
+                    return Evaluation(
+                        score=score,
+                        issues=[] if score >= 80 else [f"benchmark task '{bt.id}' scored {score:.0f}"],
+                        root_cause="" if score >= 80 else f"deterministic scorer: {bt.scorer}",
+                        suggested_changes="",
+                    )
+                except Exception:
+                    pass  # fall through to LLM evaluation
 
         # Change 2: consistency check — run multiple LLM evaluations and take
         # the median, skipping the round when the variance is too high.
