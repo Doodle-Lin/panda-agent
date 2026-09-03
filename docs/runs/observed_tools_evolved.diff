@@ -1,0 +1,28 @@
+diff --git a/src/panda_agent/tools.py b/src/panda_agent/tools.py
+--- a/src/panda_agent/tools.py
++++ b/src/panda_agent/tools.py
+@@ -29,12 +29,6 @@ def register(name: str, description: str, params: dict, handler):
+-
+-
+-# ---------------------------------------------------------------------------
+-# Built-in tools
+-# ---------------------------------------------------------------------------
+-
+ def _tool_read_file(path: str, **kw) -> str:
+     """Read a file and return its contents."""
+     try:
+@@ -46,7 +40,19 @@ def _tool_read_file(path: str, **kw) -> str:
+-        content = p.read_text(encoding="utf-8", errors="replace")
++        # Try UTF-8 (with BOM handling) first; fall back to common CJK encodings
++        content = None
++        for enc in ("utf-8-sig", "utf-8", "gbk", "gb2312", "big5"):
++            try:
++                content = p.read_text(encoding=enc)
++                break
++            except (UnicodeDecodeError, LookupError):
++                continue
++        if content is None:
++            content = p.read_text(encoding="utf-8", errors="replace")
+         if len(content) > 50000:
+             return content[:50000] + "\n...[truncated]"
+         return content

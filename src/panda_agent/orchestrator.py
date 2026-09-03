@@ -144,14 +144,53 @@ class Evaluator:
                         score = score_exact_match(bt, answer, self.workspace)
                     else:
                         score = score_file_state(bt, answer, self.workspace)
-                    return Evaluation(
-                        score=score,
-                        issues=[] if score >= 80 else [f"benchmark task '{bt.id}' scored {score:.0f}"],
-                        root_cause="" if score >= 80 else f"deterministic scorer: {bt.scorer}",
-                        suggested_changes="",
-                    )
                 except Exception:
                     pass  # fall through to LLM evaluation
+                else:
+                    if score >= 80:
+                        return Evaluation(
+                            score=score,
+                            issues=[],
+                            root_cause="",
+                            suggested_changes="",
+                        )
+                    # Produce a diagnostic root_cause the Improver can act on.
+                    # A bare "deterministic scorer: exact_match" tells the
+                    # Improver nothing about *what* to fix, so the LLM emits
+                    # NO_CHANGE and the loop never tries a patch. Surface
+                    # the concrete failure mode instead.
+                    if not result.success:
+                        root_cause = (
+                            f"task '{bt.id}' failed: {result.error or 'execution error'}"
+                        )
+                        suggested = "fix the failure path so the agent completes the task"
+                    elif not result.tool_calls:
+                        root_cause = (
+                            f"task '{bt.id}' scored {score:.0f}: the agent did not "
+                            f"call any tools; it likely answered from memory or "
+                            f"hallucination instead of retrieving the real data"
+                        )
+                        suggested = (
+                            "ensure the system prompt requires tool use before "
+                            "answering for tasks that need file/command access"
+                        )
+                    else:
+                        root_cause = (
+                            f"task '{bt.id}' scored {score:.0f}: the agent called "
+                            f"tools but the final answer did not match the expected "
+                            f"result; the answer may be wrong or the result not "
+                            f"surfaced in DONE:"
+                        )
+                        suggested = (
+                            "check whether the agent's final answer includes the "
+                            "tool result, and whether the right tool was called"
+                        )
+                    return Evaluation(
+                        score=score,
+                        issues=[f"benchmark task '{bt.id}' scored {score:.0f}"],
+                        root_cause=root_cause,
+                        suggested_changes=suggested,
+                    )
 
         # Change 2: consistency check — run multiple LLM evaluations and take
         # the median, skipping the round when the variance is too high.
@@ -432,6 +471,16 @@ an evaluation report.
 
 ## Target File: {target_file}
 
+CRITICAL CONSTRAINT — the patcher can replace only ONE definition at a time.
+Your patch MUST contain exactly ONE function, class, or assignment definition
+that already exists in the source above. Do NOT include the whole file. Do
+NOT include multiple definitions. Do NOT include imports or module-level
+docstrings unless they are the single thing being replaced.
+
+For example, to improve `build_system_prompt`, output ONLY the new
+`def build_system_prompt(tool_descriptions: str) -> str:` body. To improve
+`SYSTEM_PROMPT`, output ONLY the new `SYSTEM_PROMPT = "..."` assignment.
+
 Output format:
 ```
 PATCH_START
@@ -446,10 +495,11 @@ If no fix needed, output NO_CHANGE.
 """
 
 _RETRY_PROMPT = """\
-Previous patch failed tests:
-{test_error}
+Previous patch was rejected: {test_error}
 
-Fix and regenerate. Same output format.
+The patcher replaces exactly ONE existing definition. Re-read the source \
+above, pick the single definition whose body you are changing, and output \
+ONLY that one definition — not the whole file. Same output format.
 """
 
 # Source paths that can be evolved
@@ -735,7 +785,7 @@ class Improver:
             else:
                 retry_prompt = _RETRY_PROMPT.format(test_error=last_test_output)
                 response = call_llm(
-                    [{"role": "user", "content": retry_prompt}],
+                    [{"role": "user", "content": prompt + "\n\n" + retry_prompt}],
                     self.config.model,
                     model=self.config.model.code_model or None,
                 )
@@ -846,8 +896,9 @@ class Improver:
 
         return ImprovementResult(
             patched=False,
-            tests_passed=True,
+            tests_passed=False,
             explanation="No change applied",
+            test_output=last_test_output,
             attempts=max_retries,
         )
 

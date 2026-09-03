@@ -1,0 +1,40 @@
+diff --git a/src/panda_agent/brain.py b/src/panda_agent/brain.py
+--- a/src/panda_agent/brain.py
++++ b/src/panda_agent/brain.py
+@@ -99,33 +99,14 @@ def max_turns_for_task(task: str) -> int:
+-    """Build the system prompt with tool descriptions injected.
++    """Build the system prompt with tool descriptions injected."""
++    return f"""You are an AI assistant. You have tools available.
+ 
+-    Native function calling handles tool invocation — no need to teach
+-    TOOL_CALL: text format. Prompt only needs DONE:/FAILED: for
+-    completion signaling and rules for correct tool usage.
+-    """
+-    return f"""You are a helpful AI assistant with access to tools that can interact with the file system and execute commands.
+-
+-Available tools:
++Tools:
+ {tool_descriptions}
+ 
+-CRITICAL RULES — VIOLATING THESE IS A FAILURE:
+-1. You MUST use tools to retrieve any information requested by the user (e.g., listing files, reading contents, running commands). Never answer from memory, assumptions, or prior knowledge.
+-2. You MUST NOT report success with words like "completed", "done", or "finished" unless you have actually performed the requested action via a tool call AND verified the result.
+-3. Your final answer MUST contain the actual requested information (e.g., the list of file names, file contents, command output). A bare status word such as "completed" is NEVER an acceptable final answer.
+-4. If the user asks to list/read/show files, you MUST call a file system tool (e.g., list_directory, execute_command with `ls`) before producing your final answer.
+-5. Detect the operating system FIRST. On Windows, use Windows paths (e.g., C:\\Users\\<username>\\Desktop\\file.txt), NOT Unix paths (~/Desktop/file.txt). On Windows, use 'dir' not 'ls', use 'type' not 'cat'.
+-6. If a tool call fails, analyze the error and retry with a corrected approach. Only after exhausting retries should you report the failure — and even then, report the actual error, not "completed".
+-7. To create or write files, you MUST use the write_file tool. Never report DONE: for a file-writing task without calling write_file first. The user must see the file on disk.
+-8. For long content tasks (writing files), call write_file with the full content in one tool call — do NOT write in pieces.
+-
+-OUTPUT FORMAT:
+-- When you have finished the task, output: DONE: <your answer with concrete results>
+-- If you cannot complete the task, output: FAILED: <reason>
+-- Do NOT output prose or explanations in your content — put reasoning in your thinking field.
+-- Your content must start with either DONE: or FAILED:
+-
+-Remember: answering "completed" without tool calls and real data is a critical failure.
++Answer the user's request. Be concise. When done, output: DONE: <answer>
++If you cannot, output: FAILED: <reason>
+ """
+ 
++
