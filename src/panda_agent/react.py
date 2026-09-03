@@ -429,6 +429,14 @@ def run_react(
                     else:
                         _emit("tool_result", tool_result[:200])
                         tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
+                else:
+                    # Success path: record the tool call so the Evaluator (and
+                    # the benchmark scorer) can see what the agent actually did.
+                    # Without this, every successful native-FC call was invisible
+                    # to the deterministic scorer, which scored "completed"
+                    # instead of the real result.
+                    _emit("tool_result", tool_result[:200])
+                    tool_calls.append({"name": tool_name, "args": tool_args, "result": tool_result})
 
                 turn_record.tool_result = tool_result[:200]
 

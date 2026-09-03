@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -248,6 +249,45 @@ def run_experiment(
 
     runner_factory = runner_factory or make_react_runner
     runner = runner_factory(config)
+
+    # Run the agent from the workspace root so tools that resolve paths
+    # relative to cwd (search_files, list_files, run_command) see the
+    # fixtures the benchmark scorers check against. Restored on exit so a
+    # run never leaves the caller in a different directory.
+    _orig_cwd = os.getcwd()
+    os.chdir(str(workspace))
+    try:
+        return _run_experiment_body(
+            config, benchmark_tasks,
+            train_tasks=train_tasks, test_tasks=test_tasks,
+            train_ids=train_ids, test_ids=test_ids,
+            workspace=workspace,
+            rounds=rounds, target_score=target_score,
+            runner=runner, tolerance=tolerance,
+            estimate_noise_runs=estimate_noise_runs,
+            out_dir=out_dir,
+        )
+    finally:
+        os.chdir(_orig_cwd)
+
+
+def _run_experiment_body(
+    config: Config,
+    benchmark_tasks: list[BenchmarkTask],
+    *,
+    train_tasks: list[BenchmarkTask],
+    test_tasks: list[BenchmarkTask],
+    train_ids: list[str],
+    test_ids: list[str],
+    workspace: Path,
+    rounds: int,
+    target_score: float,
+    runner: _runner_type,
+    tolerance: float | None,
+    estimate_noise_runs: int,
+    out_dir: Path | None,
+) -> ExperimentReport:
+    """Body of run_experiment, called after cwd has been set to workspace."""
 
     noise_mean = 0.0
     noise_stdev = 0.0
@@ -528,6 +568,10 @@ def main(argv: list[str] | None = None) -> int:
         test_ids = [i for i in all_ids if i not in train_ids]
 
     out_dir = args.out or (_REPO_ROOT / "experiments" / datetime.now().strftime("%Y%m%d_%H%M%S"))
+    # out_dir is resolved against the repo root before run_experiment chdir's
+    # into the workspace, so the report lands in the repo's experiments/ dir
+    # regardless of where the agent runs from.
+    out_dir = out_dir.resolve()
 
     report = run_experiment(
         config,

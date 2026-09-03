@@ -1,0 +1,124 @@
+{
+  "timestamp": "2026-09-03T10:05:17",
+  "config_summary": {
+    "model": "GLM52RJPT",
+    "base_url": "https://aiapi.seres.cn/v1",
+    "max_turns": 10,
+    "max_retries": 3,
+    "rounds": 2,
+    "target_score": 90.0
+  },
+  "train_ids": [
+    "read_and_report",
+    "search_with_locations",
+    "count_and_compare"
+  ],
+  "test_ids": [
+    "apply_edit",
+    "recover_from_missing_file"
+  ],
+  "train_runs": [
+    {
+      "task_id": "read_and_report",
+      "instruction": "Read fixtures/sample_project/config.py and report the value assigned to DEFAULT_PORT. State just the number.\n",
+      "rounds": [
+        {
+          "round_num": 1,
+          "score": 0.0,
+          "patched": false,
+          "target_reached": false,
+          "explanation": "No change applied",
+          "test_output": "",
+          "reject_reason": "",
+          "diff": ""
+        },
+        {
+          "round_num": 2,
+          "score": 0.0,
+          "patched": false,
+          "target_reached": false,
+          "explanation": "",
+          "test_output": "",
+          "reject_reason": "",
+          "diff": ""
+        }
+      ],
+      "final_score": 0.0,
+      "total_patches": 0,
+      "restored_from_round": null
+    },
+    {
+      "task_id": "search_with_locations",
+      "instruction": "Find every TODO comment under fixtures/sample_project/ and list them with their file name and line number.\n",
+      "rounds": [
+        {
+          "round_num": 1,
+          "score": 0.0,
+          "patched": false,
+          "target_reached": true,
+          "explanation": "No change applied",
+          "test_output": "",
+          "reject_reason": "",
+          "diff": ""
+        },
+        {
+          "round_num": 2,
+          "score": 100.0,
+          "patched": false,
+          "target_reached": true,
+          "explanation": "",
+          "test_output": "",
+          "reject_reason": "",
+          "diff": ""
+        }
+      ],
+      "final_score": 100.0,
+      "total_patches": 0,
+      "restored_from_round": null
+    },
+    {
+      "task_id": "count_and_compare",
+      "instruction": "Which Python file under fixtures/sample_project/ has the most lines? Report the file name and its line count.\n",
+      "rounds": [
+        {
+          "round_num": 1,
+          "score": 100.0,
+          "patched": false,
+          "target_reached": true,
+          "explanation": "",
+          "test_output": "",
+          "reject_reason": "",
+          "diff": ""
+        }
+      ],
+      "final_score": 100.0,
+      "total_patches": 0,
+      "restored_from_round": null
+    }
+  ],
+  "test_split": [
+    {
+      "task_id": "apply_edit",
+      "instruction": "In fixtures/sample_project/config.py, change DEFAULT_PORT from 8080 to 9090. Change nothing else.\n",
+      "score_before": 100.0,
+      "score_after": 100.0,
+      "detail_before": "",
+      "detail_after": ""
+    },
+    {
+      "task_id": "recover_from_missing_file",
+      "instruction": "Read fixtures/sample_project/does_not_exist.py. If it is missing, say so explicitly rather than inventing its contents.\n",
+      "score_before": 100.0,
+      "score_after": 100.0,
+      "detail_before": "",
+      "detail_after": ""
+    }
+  ],
+  "test_weighted_before": 100.0,
+  "test_weighted_after": 100.0,
+  "test_delta": 0.0,
+  "noise_mean": 100.0,
+  "noise_stdev": 0.0,
+  "tolerance": 2.0,
+  "notes": []
+}
