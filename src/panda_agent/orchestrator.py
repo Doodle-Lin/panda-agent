@@ -537,6 +537,78 @@ def _extract_relevant(source: str, eval_data: Evaluation, keywords: list[str]) -
     return "\n\n".join(results) if results else source[:15000]
 
 
+def _extract_defined_names(source: str) -> set[str]:
+    """Return the set of top-level function, class, and assignment names."""
+    names: set[str] = set()
+    for m in re.finditer(r"^def (\w+)\(", source, re.MULTILINE):
+        names.add(m.group(1))
+    for m in re.finditer(r"^class (\w+)\(", source, re.MULTILINE):
+        names.add(m.group(1))
+    for m in re.finditer(r"^(\w+)\s*=", source, re.MULTILINE):
+        names.add(m.group(1))
+    return names
+
+
+def _extract_test_constraints(
+    source_path: Path, source: str, test_dir: Path
+) -> str:
+    """Find test snippets that constrain the definitions in ``source_path``.
+
+    The Improver's LLM can patch ``build_system_prompt`` all it wants, but if
+    it drops ``{tool_descriptions}`` from the return value,
+    ``test_framework.py::test_system_prompt_has_tools_placeholder`` fails and
+    the patch is reverted -- and the LLM never sees that test. This function
+    surfaces the relevant test bodies so the LLM knows what it must preserve.
+
+    Returns a formatted string for injection into the Improver prompt, or
+    ``""`` when no relevant tests are found.
+    """
+    if not test_dir or not test_dir.is_dir():
+        return ""
+
+    # Derive the module name: src/panda_agent/brain.py -> panda_agent.brain
+    try:
+        rel = source_path.relative_to(test_dir.parent / "src")
+        module = str(rel.with_suffix("")).replace(os.sep, ".")
+    except ValueError:
+        return ""
+
+    defined = _extract_defined_names(source)
+    if not defined:
+        return ""
+
+    snippets: list[str] = []
+    for test_file in sorted(test_dir.rglob("test_*.py")):
+        try:
+            text = test_file.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        # Only look at files that import from this module.
+        if module not in text and source_path.stem not in text:
+            continue
+        # Extract test functions that reference any defined name.
+        for m in re.finditer(r"^(\s*def (test_\w+)\(.*?\):.*?)(?=\n\def |\ndef |\Z)", text, re.DOTALL | re.MULTILINE):
+            body = m.group(1)
+            # Check if any defined name appears in the test body.
+            if any(name in body for name in defined):
+                # Truncate long test bodies to keep the prompt manageable.
+                if len(body) > 300:
+                    body = body[:300] + "\n    ... [truncated]"
+                snippets.append(body.strip())
+                if len(snippets) >= 15:
+                    break
+        if len(snippets) >= 15:
+            break
+
+    if not snippets:
+        return ""
+    # Cap total size to keep the prompt within model context limits.
+    result = "\n\n".join(snippets)
+    if len(result) > 3000:
+        result = result[:3000] + "\n# ... [more tests truncated]"
+    return result
+
+
 def _extract_patch(response: str) -> str:
     """Extract patched code from LLM response. Supports multiple formats."""
     # Format 1: PATCH_START with python code fence
@@ -743,11 +815,22 @@ class Improver:
             "suggested_changes": evaluation.suggested_changes,
         }, indent=2, ensure_ascii=False)
 
+        # Surface the test constraints the patched definition must satisfy.
+        # Without this the LLM cannot know that build_system_prompt must keep
+        # {tool_descriptions}, or that _tool_read_file must still return a str.
+        # Guard against non-Path mocks in tests: only call when source_path
+        # is a real Path and self.test_path is a real directory.
+        test_constraints = ""
+        if isinstance(source_path, Path) and self.test_path and self.test_path.is_dir():
+            test_constraints = _extract_test_constraints(source_path, source, self.test_path)
+
         prompt = _IMPROVE_PROMPT.format(
             evaluation_json=eval_json,
             source_code=relevant,
             target_file=source_path.name,
         )
+        if test_constraints:
+            prompt += "\n\n## Test constraints (your patch MUST pass these)\n```python\n" + test_constraints + "\n```"
 
         history_context = ""
         if self.memory and hasattr(self.memory, 'retrieve'):
