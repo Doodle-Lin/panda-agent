@@ -65,7 +65,7 @@ def _call_llm_raw(
         f"{config.base_url}/chat/completions",
         json=payload,
         headers=headers,
-        timeout=timeout,
+        timeout=(timeout, timeout),  # (connect, read) — read timeout per chunk
         stream=True,
     )
     resp.raise_for_status()
@@ -75,7 +75,18 @@ def _call_llm_raw(
     reasoning = ""
     tool_calls_acc: dict[int, dict] = {}
 
+    # Use a deadline so a stalled stream (no data for a long time) is
+    # treated as a timeout rather than hanging forever. iter_lines with a
+    # read timeout catches the common case where the connection opens but
+    # the server never sends the next chunk.
+    import time as _time
+    deadline = _time.monotonic() + timeout
     for line in resp.iter_lines(decode_unicode=True):
+        if _time.monotonic() > deadline:
+            raise requests.Timeout("stream stalled: no data within timeout window")
+        # Reset deadline on each received line — the timeout is per-gap,
+        # not per-total-stream.
+        deadline = _time.monotonic() + timeout
         if not line or not line.startswith("data: "):
             continue
         data = line[6:]
