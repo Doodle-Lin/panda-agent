@@ -59,4 +59,5 @@ ignore = ["E501"]  # line too long — handled by formatting, not lint
 # Scripts and tests bootstrap sys.path before importing the package, which
 # legitimately requires imports after a statement.
 "scripts/run_experiment.py" = ["E402"]
+"scripts/observe_evolution.py" = ["E402"]
 "tests/test_run_experiment.py" = ["E402"]
