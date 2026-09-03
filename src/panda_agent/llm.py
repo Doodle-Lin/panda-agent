@@ -132,23 +132,62 @@ def call_llm_detailed(
 ) -> LLMResponse:
     """Call LLM with native function calling support.
 
-    If primary model fails (timeout/connection/HTTP error), tries
-    config.fallback model if configured.
+    Retries on transient failures (timeout, connection reset, 5xx) up to
+    ``max_retries`` times with exponential backoff before falling back to
+    ``config.fallback`` model. This is what makes the evolution loop
+    resilient to flaky endpoints -- a single connection reset no longer
+    scores the whole round 0.
     """
+    import time
+
     effective_model = model or config.default
-    try:
-        return _call_llm_raw(messages, config, effective_model, max_tokens, temperature, timeout, tools)
-    except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as e:
-        fallback_model = getattr(config, "fallback", "") or ""
-        if fallback_model and fallback_model != effective_model:
-            try:
-                resp = _call_llm_raw(messages, config, fallback_model, max_tokens, temperature, timeout, tools)
-                return resp
-            except Exception:
-                pass
-        return LLMResponse(error=f"LLM call failed: {e}")
-    except Exception as e:
-        return LLMResponse(error=f"unexpected: {e}")
+    max_retries = 3
+    retry_delays = [2, 5, 10]  # seconds, exponential-ish
+
+    for attempt in range(max_retries + 1):
+        try:
+            return _call_llm_raw(
+                messages, config, effective_model,
+                max_tokens, temperature, timeout, tools,
+            )
+        except (requests.Timeout, requests.ConnectionError) as e:
+            if attempt < max_retries:
+                delay = retry_delays[min(attempt, len(retry_delays) - 1)]
+                import sys
+                print(
+                    f"[llm] retry {attempt + 1}/{max_retries} after "
+                    f"{type(e).__name__} ({delay}s delay)",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+                continue
+            # Exhausted retries; try fallback model if configured.
+            fallback_model = getattr(config, "fallback", "") or ""
+            if fallback_model and fallback_model != effective_model:
+                try:
+                    return _call_llm_raw(
+                        messages, config, fallback_model,
+                        max_tokens, temperature, timeout, tools,
+                    )
+                except Exception:
+                    pass
+            return LLMResponse(error=f"LLM call failed after {max_retries} retries: {e}")
+        except requests.HTTPError as e:
+            # 5xx is transient; 4xx is not (bad request, auth, etc.).
+            status = getattr(e.response, "status_code", 0)
+            if 500 <= status < 600 and attempt < max_retries:
+                delay = retry_delays[min(attempt, len(retry_delays) - 1)]
+                import sys
+                print(
+                    f"[llm] retry {attempt + 1}/{max_retries} after HTTP {status} "
+                    f"({delay}s delay)",
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+                continue
+            return LLMResponse(error=f"LLM HTTP {status}: {e}")
+        except Exception as e:
+            return LLMResponse(error=f"unexpected: {e}")
 
 
 def call_llm(
