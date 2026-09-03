@@ -11,6 +11,12 @@ class Task:
     input_path: str = ""
     instruction: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Optional explicit binding to a BenchmarkTask.id. When set, the Evaluator
+    # uses the named benchmark task's deterministic scorer directly instead of
+    # substring-matching the instruction text -- so a real-world task phrased
+    # differently from the benchmark still gets the objective scorer, and a
+    # vaguely-worded task does not accidentally match the wrong benchmark.
+    benchmark_id: str = ""
 
 
 @dataclass

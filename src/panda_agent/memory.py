@@ -66,14 +66,41 @@ class EmbeddedMemoryStore:
     def __init__(self, path: Path):
         self.path = path.expanduser().resolve()
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self):
+        """Open a connection as a context manager that commits and closes.
+
+        Returning the raw ``sqlite3.Connection`` and using it as a context
+        manager (``with self._connect() as connection:``) commits on a clean
+        exit but does **not** close the connection. On Windows the leftover
+        open connection holds a file lock on ``memory.sqlite3``, which blocks
+        ``TemporaryDirectory`` cleanup in tests (``WinError 32``) and prevents
+        the DB file from being moved/deleted by the caller.
+
+        This wrapper runs the connection's own context manager first (so
+        commits on success / rolls back on exception), then closes it in a
+        ``finally`` so callers keep the ``with self._connect() as connection:``
+        spelling without leaking locks or losing transactions.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         self._create_schema(connection)
-        return connection
+
+        import contextlib
+
+        @contextlib.contextmanager
+        def _cm():
+            try:
+                # Delegate to the connection's own context manager so a clean
+                # exit commits and an exception rolls back.
+                with connection:
+                    yield connection
+            finally:
+                connection.close()
+
+        return _cm()
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:

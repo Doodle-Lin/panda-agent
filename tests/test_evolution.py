@@ -585,6 +585,45 @@ class TestWorktreeVerification:
         passed, msg = improver._verify_in_worktree("x = 1\n", tmp_path / "src" / "test.py")
         assert passed is True  # fail open for non-git
 
+    def test_worktree_warning_not_emitted_when_enabled(self, tmp_path):
+        """With use_worktree=True the warning is suppressed regardless of git."""
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        improver.use_worktree = True
+        improver._worktree_warning_emitted = False
+        assert improver._warn_worktree_disabled_in_git_repo() is None
+
+    def test_worktree_warning_not_emitted_in_non_git_dir(self, tmp_path):
+        """In a non-git directory the warning is not surfaced: the isolation
+        gap only matters when there IS a repo to isolate against."""
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        improver.use_worktree = False
+        improver._worktree_warning_emitted = False
+        # tmp_path is not a git work tree, so no warning.
+        assert improver._warn_worktree_disabled_in_git_repo() is None
+
+    def test_worktree_warning_emitted_once_in_git_repo(self, tmp_path, monkeypatch):
+        """In a git repo with use_worktree off, the warning fires exactly once."""
+        from panda_agent.orchestrator import Improver
+        improver = Improver.__new__(Improver)
+        improver.project_root = tmp_path
+        improver.test_path = tmp_path / "tests"
+        improver.use_worktree = False
+        improver._worktree_warning_emitted = False
+        # Force _is_git_repo to True so this runs without a real repo.
+        monkeypatch.setattr(improver, "_is_git_repo", lambda: True)
+
+        first = improver._warn_worktree_disabled_in_git_repo()
+        assert first is not None
+        assert "use_worktree" in first
+        # Second call is suppressed (emitted-once).
+        assert improver._warn_worktree_disabled_in_git_repo() is None
+
 
 # ---------------------------------------------------------------------------
 # Phase 5: Evaluator — deterministic benchmark scorer + LLM consistency check
@@ -647,6 +686,70 @@ class TestEvaluatorDeterministicScorer:
         assert evaluation is not None
         assert evaluation.score == 72.0
         # LLM MUST be called since no benchmark matched
+        assert mock_llm.call_count >= 1
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_benchmark_id_routes_deterministically(self, mock_llm):
+        """An explicit Task.benchmark_id routes to the named benchmark task's
+        scorer even when the instruction text is completely different.
+
+        This is the fix for the substring-matching fragility: a real task
+        phrased differently from the benchmark still gets the objective
+        scorer, and the LLM is never consulted.
+        """
+        bt = BenchmarkTask(
+            id="search-todos",
+            instruction="Find every TODO under src/ and list them.",
+            scorer="exact_match",
+            expected={"contains": ["config.py", "7"]},
+        )
+        config = Config()
+        evaluator = Evaluator(
+            config,
+            benchmark_tasks=[bt],
+            workspace=Path("."),
+        )
+        # Note: instruction shares no substring with bt.instruction.
+        task = Task(
+            instruction="Audit the codebase for outstanding work items.",
+            benchmark_id="search-todos",
+        )
+        result = ExecutionResult(
+            success=True,
+            tool_calls=[{"name": "search", "result": "config.py:7 TODO fix"}],
+        )
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        assert evaluation.score == 100.0
+        assert mock_llm.call_count == 0
+
+    @patch("panda_agent.orchestrator.call_llm")
+    def test_evaluator_benchmark_id_unknown_falls_back_to_substring(self, mock_llm):
+        """A benchmark_id that names no known benchmark task falls through to
+        the substring path, then to the LLM -- rather than silently scoring 0.
+        """
+        bt = BenchmarkTask(
+            id="real-id",
+            instruction="What is 2+2?",
+            scorer="exact_match",
+            expected={"contains": ["4"]},
+        )
+        mock_llm.return_value = '{"score": 50, "issues": []}'
+        config = Config()
+        evaluator = Evaluator(
+            config,
+            benchmark_tasks=[bt],
+            workspace=Path("."),
+        )
+        task = Task(instruction="unrelated", benchmark_id="nonexistent-id")
+        result = ExecutionResult(success=True, tool_calls=[])
+
+        evaluation = evaluator.evaluate(task, result)
+
+        assert evaluation is not None
+        assert evaluation.score == 50.0
         assert mock_llm.call_count >= 1
 
 

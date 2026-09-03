@@ -278,6 +278,16 @@ weighted score 100 → 89.3, now rejected.
 Function signatures are kept stable so the Improver can rewrite bodies without
 breaking callers.
 
+> **Honest scope note.** In practice the "mind" surface that actually moves
+> the benchmark needle today is `SYSTEM_PROMPT`: it shapes every tool call.
+> `should_retry` and `max_turns_for_task` are keyword-list heuristics whose
+> bodies the Improver *can* rewrite, but the payoff per patch is small and
+> they rarely show up as the root cause in an evaluation. Treat "evolve the
+> mind" as "evolve the prompt" for now; the decision-logic surface is
+> intentionally narrow so patches stay safe. Expanding it (a planner, a
+> tool-selection policy, a reflection step) is on the roadmap, not in the
+> current loop.
+
 ---
 
 ## Graph Memory
@@ -352,6 +362,15 @@ code. The regression benchmark makes this harder — a weakened test does not
 improve benchmark score — but the correct fix is verifying in a separate
 checkout. See Roadmap R2.
 
+The `Improver` can verify patches in an isolated git worktree
+(`use_worktree=True`): it copies the patched source into a worktree checked
+out at `HEAD` and runs the *original* tests there, so a patch that weakens a
+test cannot pass the gate it is gated by. This is **opt-in and off by
+default** because it requires a git repo and breaks the bundled toy suite.
+When it is off and the project is a git repo, the Improver prints a warning
+on the first `improve()` call. Any evolution run whose accept/reject
+decisions need to be trustworthy should set `use_worktree=True`.
+
 **No prompt-injection defense.** File contents and command output feed straight
 back into the conversation. A file containing adversarial instructions can still
 steer the loop; the boundaries limit the damage, they don't detect the attempt.
@@ -406,11 +425,14 @@ and privacy properties are acceptable.
 
 Ordered by impact on making this genuinely useful.
 
-### R1 — Validate evolution memory with real workloads 🟡
+### R1 — Validate evolution with real workloads 🟡
 
-Task lessons and patch outcomes are persisted. The next step is to demonstrate
-that retrieving them improves representative tasks across supported model
-providers, with published traces, score deltas, cost, and failure modes.
+Task lessons and patch outcomes are persisted, and the bundled experiment
+runner (`scripts/run_experiment.py`) now produces a reproducible report with
+per-round scores, accept/reject reasons, and a held-out generalisation
+delta. The missing piece is published runs: traces, score deltas, cost,
+and failure modes across supported model providers, so the loop's effect is
+a number someone else can check rather than an assertion.
 
 ### R2 — Verify patches in a separate checkout 🔴
 
