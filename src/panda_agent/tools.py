@@ -46,7 +46,11 @@ def _tool_read_file(path: str, **kw) -> str:
     if p.is_dir():
         return f"Error: path is a directory, not a file: {path}"
     try:
-        content = p.read_text(encoding="utf-8", errors="replace")
+        # utf-8-sig handles BOM-prefixed files (common on Windows) while
+        # being a strict superset of utf-8 for files without a BOM.
+        # Proposed by the self-evolution loop's Improver during observation
+        # run 5 (docs/runs/2026-09-04_real_baseline_attempt.md).
+        content = p.read_text(encoding="utf-8-sig", errors="replace")
         if len(content) > 50000:
             return content[:50000] + "\n...[truncated]"
         return content
@@ -98,10 +102,15 @@ def _tool_search_files(path: str, pattern: str, **kw) -> str:
         if len(matches) >= limit:
             matches.append(f"...[stopped at {limit} matches]")
             break
-        if not f.is_file() or any(s in str(f) for s in skip):
+        # Match skip dirs against path components, not substrings of the
+        # full path string. The old `any(s in str(f) for s in skip)` would
+        # skip `.github` because `.git` is a substring of it.
+        # Proposed by the self-evolution loop's Improver during observation
+        # run 4 (docs/runs/2026-09-04_observation_clean_attempt.md).
+        if not f.is_file() or any(part in skip for part in f.parts):
             continue
         try:
-            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = f.read_text(encoding="utf-8-sig", errors="replace").splitlines()
         except OSError:
             continue
         for i, line in enumerate(lines, 1):
