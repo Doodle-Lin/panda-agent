@@ -431,7 +431,15 @@ class EmbeddedMemory:
 
 
 class MemoryClient:
-    """Memory facade using embedded SQLite by default and HTTP optionally."""
+    """Memory facade using embedded SQLite, with optional HTTP backend.
+
+    The default and only out-of-the-box backend is embedded SQLite — no
+    external service is required. An HTTP backend can still be configured
+    by setting ``graph_url`` to a non-embedded URL, but it is never the
+    default and never silently fallen back to. If the user explicitly
+    configures HTTP and it is unreachable, the client returns empty
+    results rather than pretending to have a memory.
+    """
 
     def __init__(self, url: str = "embedded://", storage_path: str | Path | None = None):
         configured_url = url or "embedded://"
@@ -443,6 +451,7 @@ class MemoryClient:
         elif self._embedded:
             self._mem = EmbeddedMemory.get()
         else:
+            # HTTP backend: explicitly requested. No silent fallback.
             self._mem = None
 
     @classmethod
