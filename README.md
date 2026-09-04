@@ -45,6 +45,13 @@ What makes this different: the agent evolves **both its "hands" (tools) and its
 "mind" (system prompt + decision logic)**, and every patch must survive a
 verification gate before it's kept.
 
+**Observed in practice** (see `docs/runs/`): the Improver has generated
+defensible patches to both `tools.py` (encoding fallback, filename matching,
+skip-directory fix) and `brain.py` (prompt recovery from a degraded baseline,
+preserving test constraints). The held-out evaluation caught a real overfit
+(evolved prompt hurt `recover_from_missing_file`: 100 → 0). See the
+[experiment reports](docs/runs/) for traces and diffs.
+
 ---
 
 ## Project Status
@@ -288,6 +295,16 @@ breaking callers.
 > tool-selection policy, a reflection step) is on the roadmap, not in the
 > current loop.
 
+**Test constraint injection.** The Improver cannot see the tests that gate
+its patches — but now it can. `_extract_test_constraints` in
+`orchestrator.py` scans the test suite for functions that import the target
+module and reference its defined names, then injects those test bodies into
+the Improver prompt as "Test constraints your patch MUST pass." This is what
+makes brain evolution possible: without it, the LLM drops `{tool_descriptions}`
+from `build_system_prompt` and the patch is silently reverted. With it, the
+LLM preserves the placeholder because it sees the test that checks for it.
+Verified across multiple observation runs in `docs/runs/`.
+
 ---
 
 ## Graph Memory
@@ -425,21 +442,34 @@ and privacy properties are acceptable.
 
 Ordered by impact on making this genuinely useful.
 
-### R1 — Validate evolution with real workloads 🟡
+### R1 — Validate evolution with real workloads 🟡→✅ (mechanism)
 
 Task lessons and patch outcomes are persisted, and the bundled experiment
-runner (`scripts/run_experiment.py`) now produces a reproducible report with
-per-round scores, accept/reject reasons, and a held-out generalisation
-delta. The missing piece is published runs: traces, score deltas, cost,
-and failure modes across supported model providers, so the loop's effect is
-a number someone else can check rather than an assertion.
+runner (`scripts/run_experiment.py`) and observation script
+(`scripts/observe_evolution.py`) produce reproducible reports with
+per-round scores, accept/reject reasons, held-out generalisation deltas,
+and actual patch diffs.
+
+**Observed so far** (see `docs/runs/`):
+
+| Run | Brain evolved | Tools evolved | Held-out delta |
+|---|---|---|---|
+| initial (ceiling baseline) | no | no | +0.0 (no headroom) |
+| degraded baseline | no | yes (encoding fallback) | partial |
+| degraded + test constraints | yes (prompt recovery) | no | -42.9 (overfit caught) |
+| degraded + LLM retry | yes | yes (search_files) | partial |
+
+The loop generates defensible patches every time the LLM endpoint cooperates.
+The blocker for a complete end-to-end run with a held-out delta is endpoint
+reliability, not the evolution mechanism. A stable endpoint or a
+self-hosted model would produce the missing clean number.
 
 ### R2 — Verify patches in a separate checkout 🔴
 
 The agent can currently reach the tests that gate it. Copying the tree to a
 scratch directory, applying the patch there, and running the suite against that
 copy makes weakening the gate structurally impossible rather than merely
-discouraged.
+discouraged. The `Improver` now warns when `use_worktree=False` in a git repo.
 
 ### R3 — OS-level isolation 🟡
 
