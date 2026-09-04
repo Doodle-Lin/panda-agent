@@ -1,0 +1,31 @@
+diff --git a/src/panda_agent/tools.py b/src/panda_agent/tools.py
+--- a/src/panda_agent/tools.py (baseline)
++++ b/src/panda_agent/tools.py (evolved by Improver, clean run attempt)
+@@ -66,15 +66,13 @@ def _tool_write_file(path: str, content: str, **kw) -> str:
+ def _tool_search_files(path: str, pattern: str, **kw) -> str:
+     """Search file contents with a regex, reporting file and line number.
+ 
+-    Runs in-process. The previous implementation interpolated ``path`` and
+-    ``pattern`` into a Python source string and executed it via ``python -c``,
+-    which made tool arguments part of a program -- an injection surface with no
+-    upside, since the search needs no subprocess at all.
++    Also matches file names against the pattern so that searches for files
++    by name work in addition to content searches. Skip directories are
++    matched against path components (not substrings) to avoid false positives
++    like ``.github`` matching the ``.git`` skip entry.
+     """
+     try:
+         root = safe_path(path)
+@@ -98,8 +96,14 @@ def _tool_search_files(path: str, pattern: str, **kw) -> str:
+-        if not f.is_file() or any(s in str(f) for s in skip):
++        if not f.is_file() or any(part in skip for part in f.parts):
+             continue
++        # Also match file names against the pattern
++        if regex.search(f.name):
++            matches.append(f"{f}: (filename match)")
++            if len(matches) >= limit:
++                matches.append(f"...[stopped at {limit} matches]")
++                break
+         try:
+             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+         except OSError:
