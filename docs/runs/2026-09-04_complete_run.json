@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-09-04T14:23:19",
+  "model": "GLM52RJPT",
+  "train_ids": ["read_and_report"],
+  "test_ids": ["apply_edit"],
+  "test_weighted_before": 100.0,
+  "test_weighted_after": 100.0,
+  "test_delta": 0.0,
+  "total_patches": 0,
+  "conclusion": "evolution did NOT occur: zero patches were kept across all train tasks.",
+  "test_per_task": [
+    {"task_id": "apply_edit", "before": 100.0, "after": 100.0, "delta": 0.0}
+  ],
+  "train_runs": [
+    {
+      "task_id": "read_and_report",
+      "final_score": 0.0,
+      "total_patches": 0,
+      "rounds": [
+        {"round_num": 1, "score": 0.0, "patched": false, "target_reached": false, "explanation": "", "reject_reason": ""}
+      ]
+    }
+  ]
+}
