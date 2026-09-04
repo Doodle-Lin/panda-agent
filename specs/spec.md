@@ -64,7 +64,7 @@ agent:
 
 memory:
   enabled: true
-  graph_url: http://127.0.0.1:9121  # Graph memory API
+  graph_url: embedded://         # Embedded SQLite graph (no external service)
   auto_write: true            # Auto-save learned knowledge
 
 evolution:
