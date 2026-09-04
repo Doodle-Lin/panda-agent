@@ -323,6 +323,11 @@ def cmd_chat(args):
 
         Called after every task in chat mode. Runs Learner (Level 2)
         and triggers Improver (Level 3) if evidence is sufficient.
+
+        Scoring: when the task instruction matches a benchmark task (via
+        substring match), the deterministic scorer is used so the score
+        reflects actual task quality, not just "did it finish". Otherwise
+        falls back to the heuristic (success+tools=80, success=60, fail=20).
         """
         try:
             # Build ExecutionResult from ReActResult
@@ -334,21 +339,69 @@ def cmd_chat(args):
             )
             task = Task(instruction=user_input)
 
-            # Level 2: Learn
-            # Quick self-evaluation (don't call LLM for scoring — use heuristics)
+            # Score the task. Try deterministic benchmark scorer first;
+            # fall back to heuristic when no benchmark matches.
             from .types import Evaluation
-            if result.success and result.tool_calls:
-                score = 80.0
-            elif result.success:
-                score = 60.0
-            else:
-                score = 20.0
-            issues = []
-            if not result.tool_calls and result.success:
-                issues.append("Task completed without using any tools")
-            if result.error:
-                issues.append(f"Error: {result.error[:100]}")
-            evaluation = Evaluation(score=score, issues=issues)
+            from .benchmark import load_tasks, score_exact_match, score_file_state
+            from pathlib import Path as _P
+
+            score = None
+            issues: list[str] = []
+            root_cause = ""
+            suggested_changes = ""
+
+            try:
+                bench_path = _P(__file__).resolve().parent.parent.parent / "benchmarks" / "tasks.yaml"
+                if bench_path.exists():
+                    bench_tasks = load_tasks(bench_path)
+                    workspace = _P(__file__).resolve().parent.parent.parent / "benchmarks"
+                    for bt in bench_tasks:
+                        if bt.scorer in ("exact_match", "file_state") and (
+                            bt.instruction.strip() in user_input.strip()
+                            or user_input.strip() in bt.instruction.strip()
+                        ):
+                            answer = result.error or "completed"
+                            if result.success and result.tool_calls:
+                                answer = result.tool_calls[-1].get("result", answer)
+                            try:
+                                if bt.scorer == "exact_match":
+                                    score = score_exact_match(bt, answer, workspace)
+                                else:
+                                    score = score_file_state(bt, answer, workspace)
+                                if score < 80:
+                                    issues.append(f"benchmark task '{bt.id}' scored {score:.0f}")
+                                    if not result.tool_calls:
+                                        root_cause = "agent did not call tools; likely answered from memory"
+                                        suggested_changes = "ensure prompt requires tool use before answering"
+                                    elif not result.success:
+                                        root_cause = f"task failed: {result.error or 'error'}"
+                                        suggested_changes = "fix the failure path"
+                                    else:
+                                        root_cause = "tools called but answer did not match expected result"
+                                        suggested_changes = "check answer includes tool result"
+                            except Exception:
+                                pass
+                            break
+            except Exception:
+                pass
+
+            if score is None:
+                # Heuristic fallback
+                if result.success and result.tool_calls:
+                    score = 80.0
+                elif result.success:
+                    score = 60.0
+                else:
+                    score = 20.0
+                if not result.tool_calls and result.success:
+                    issues.append("Task completed without using any tools")
+                if result.error:
+                    issues.append(f"Error: {result.error[:100]}")
+
+            evaluation = Evaluation(
+                score=score, issues=issues,
+                root_cause=root_cause, suggested_changes=suggested_changes,
+            )
 
             learning = learner.learn(task, exec_result, evaluation)
 

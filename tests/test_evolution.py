@@ -145,8 +145,8 @@ class TestLearner:
         assert learning.trigger_evolution is True
 
     @patch("panda_agent.orchestrator.call_llm")
-    def test_learner_no_trigger_below_3(self, mock_llm):
-        """Test 7: After 2 calls with same pattern, trigger_evolution=False."""
+    def test_learner_no_trigger_below_2(self, mock_llm):
+        """Test 7: After 1 call with same pattern, trigger_evolution=False."""
         import tempfile
         tmpdir = tempfile.mkdtemp()
         old_home = os.environ.get("PANDA_HOME")
@@ -165,9 +165,7 @@ class TestLearner:
             result = ExecutionResult(success=False, error="fail")
             evaluation = Evaluation(score=50)
 
-            learning = None
-            for _ in range(2):
-                learning = learner.learn(task, result, evaluation)
+            learning = learner.learn(task, result, evaluation)
 
             assert learning.trigger_evolution is False
         finally:
