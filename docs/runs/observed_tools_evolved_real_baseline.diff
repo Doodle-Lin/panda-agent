@@ -1,0 +1,30 @@
+diff --git a/src/panda_agent/tools.py b/src/panda_agent/tools.py
+index 7c69aea..856cc16 100644
+--- a/src/panda_agent/tools.py
++++ b/src/panda_agent/tools.py
+@@ -29,12 +29,6 @@ def register(name: str, description: str, params: dict, handler):
+         "params": params,
+         "handler": handler,
+     }
+-
+-
+-# ---------------------------------------------------------------------------
+-# Built-in tools
+-# ---------------------------------------------------------------------------
+-
+ def _tool_read_file(path: str, **kw) -> str:
+     """Read a file and return its contents."""
+     try:
+@@ -46,9 +40,9 @@ def _tool_read_file(path: str, **kw) -> str:
+     if p.is_dir():
+         return f"Error: path is a directory, not a file: {path}"
+     try:
+-        content = p.read_text(encoding="utf-8", errors="replace")
+-        if len(content) > 50000:
+-            return content[:50000] + "\n...[truncated]"
++        content = p.read_text(encoding="utf-8-sig", errors="replace")
++        if len(content) > 1000000:
++            return content[:1000000] + "\n...[truncated]"
+         return content
+     except Exception as e:
+         return f"Error reading file: {e}"
