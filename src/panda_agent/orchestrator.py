@@ -280,8 +280,23 @@ Rules for lessons:
 - Example GOOD: "On Windows, use 'dir %USERPROFILE%\\Desktop' to list desktop files"
 - Example BAD: "The agent should be more careful about operating system detection"
 - Maximum 3 lessons, only the most valuable ones
-- "is_structural" = true if the root cause is in the agent's prompt or tools (not the environment)
-- "structural_reason" = if is_structural, explain which function/prompt needs fixing and why
+
+Rules for is_structural:
+- "is_structural" = true if the root cause is in the agent's SYSTEM_PROMPT or
+  tool implementations — something a code patch to brain.py or tools.py could
+  fix. Examples of structural issues:
+  * The prompt does not require tool use, so the agent answers from memory
+  * A tool returns misleading output (e.g., garbled encoding, missing line numbers)
+  * The prompt omits a rule the agent needs (e.g., "include file content in DONE:")
+  * A tool's error message is confusing, causing repeated wrong retries
+- "is_structural" = false if the failure is a one-time usage mistake the agent
+  can learn from via memory alone (e.g., wrong path, wrong command, forgot to
+  check OS). Memory lessons fix these; code patches do not.
+- When in doubt, prefer false: structural patches are expensive and must be
+  well-justified.
+- "structural_reason" = if is_structural, name the specific function or prompt
+  section that needs fixing and why. Example: "build_system_prompt does not
+  require including tool results in DONE: output"
 """
 
 
