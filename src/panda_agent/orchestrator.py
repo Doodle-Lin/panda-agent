@@ -408,10 +408,18 @@ class Learner:
                 except Exception:
                     pass
 
-        # Track recurring error patterns
+        # Track recurring error patterns. Normalize aggressively:
+        # extract the core topic (first 40 chars, lowercased, stripped of
+        # punctuation) so variations of the same root cause count together.
         recurring = data.get("recurring_errors", [])
         for pattern in recurring:
             normalized = pattern.strip().lower()[:100]
+            # Further normalize: take the first clause (before 'which' or
+            # 'despite' or 'causing') to group variations.
+            for sep in (" which ", " despite ", " causing ", " — ", " - "):
+                if sep in normalized:
+                    normalized = normalized.split(sep)[0].strip()
+            normalized = normalized[:60]
             if normalized:
                 self._error_counts[normalized] = self._error_counts.get(normalized, 0) + 1
         self._save_error_counts()
