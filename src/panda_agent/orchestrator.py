@@ -52,6 +52,8 @@ class Executor:
             tool_calls=result.tool_calls,
             success=result.success,
             error=result.error,
+            trace=result.trace,
+            answer=result.answer,
         )
 
 
@@ -135,10 +137,14 @@ class Evaluator:
                         break
             if matched is not None:
                 bt = matched
-                answer = result.error or "completed"
-                if result.success and result.tool_calls:
-                    # Use the last tool call's result as the answer
-                    answer = result.tool_calls[-1].get("result", answer)
+                # Prefer the agent's final DONE: answer (what the user sees)
+                # over the raw last tool call result (which may be a file
+                # path or error message). Fall back to tool result, then error.
+                answer = result.answer or ""
+                if not answer and result.success and result.tool_calls:
+                    answer = result.tool_calls[-1].get("result", "")
+                if not answer:
+                    answer = result.error or "completed"
                 try:
                     if bt.scorer == "exact_match":
                         score = score_exact_match(bt, answer, self.workspace)

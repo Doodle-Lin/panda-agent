@@ -26,6 +26,10 @@ class ExecutionResult:
     success: bool = True
     error: str | None = None
     trace: "ExecutionTrace | None" = None
+    # The agent's final DONE: answer text. This is what a benchmark scorer
+    # should check — not the raw last tool call result, which may be a
+    # file path or error message rather than the answer the user sees.
+    answer: str = ""
 
 
 @dataclass
