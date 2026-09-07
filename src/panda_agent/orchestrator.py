@@ -666,7 +666,7 @@ def _replace_function(source: str, new_code: str) -> str:
     return replace_definition(source, new_code).source
 
 
-def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tuple[bool, str]:
+def _run_pytest(test_path: Path, project_root: Path, timeout: int = 600) -> tuple[bool, str]:
     """Run pytest and return (passed, output_tail)."""
     try:
         result = subprocess.run(

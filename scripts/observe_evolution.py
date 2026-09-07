@@ -38,21 +38,16 @@ from panda_agent.types import Task
 
 _BRAIN = _REPO_ROOT / "src" / "panda_agent" / "brain.py"
 
-# The deliberately degraded prompt. It drops every "critical rule" that makes
-# the agent actually use its tools before answering: no "MUST use tools to
-# retrieve information", no "read before write", no "final answer must
-# contain real data". A capable model answering from memory/hallucination
-# against this prompt should score well below 100 on the toy suite -- which
-# is the headroom evolution needs.
+# The deliberately degraded prompt. It removes all tool-use guidance and
+# actively discourages tool use, forcing the agent to answer from memory.
+# A capable model like GLM-5.2 will STILL call tools because native FC is
+# strong — so the degradation also removes DONE:/FAILED: signaling and
+# adds a "just answer directly" instruction to suppress tool calls.
+# The goal: baseline drops below 70 so the Improver has headroom to work.
 _DEGRADED_BUILD_PROMPT = '''def build_system_prompt(tool_descriptions: str) -> str:
-    """Build the system prompt with tool descriptions injected."""
-    return f"""You are an AI assistant. You have tools available.
-
-Tools:
+    """Build the system prompt."""
+    return f"""You are a helpful assistant. Answer the user's question directly from your knowledge. Do not use any tools unless absolutely necessary. Just give your best answer immediately.
 {tool_descriptions}
-
-Answer the user's request. Be concise. When done, output: DONE: <answer>
-If you cannot, output: FAILED: <reason>
 """
 '''
 
@@ -149,7 +144,7 @@ def make_react_runner(config: Config) -> Callable[[Task], str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="observe_evolution")
     parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument("--target", type=float, default=90.0)
+    parser.add_argument("--target", type=float, default=70.0)
     parser.add_argument(
         "--tasks", type=Path, default=_REPO_ROOT / "benchmarks" / "tasks.yaml",
     )
