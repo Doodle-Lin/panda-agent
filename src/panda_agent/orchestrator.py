@@ -435,6 +435,24 @@ class Learner:
             else:
                 trigger_reason = f"Structural issue identified (occurrence {self._error_counts[pattern_key]}/2): {structural_reason}"
 
+        # Also trigger when a recurring error pattern appears >=2 times,
+        # regardless of is_structural. A recurring error that keeps coming
+        # back IS a structural problem — the LLM may classify it as a
+        # "usage mistake", but if the same mistake happens every time, the
+        # agent's prompt or tools are not preventing it, which is structural.
+        if not trigger and evaluation.score < 70 and recurring:
+            for pattern in recurring:
+                normalized = pattern.strip().lower()[:100]
+                if normalized and self._error_counts.get(normalized, 0) >= 2:
+                    trigger = True
+                    trigger_reason = (
+                        f"Recurring error '{pattern[:60]}' seen "
+                        f"{self._error_counts[normalized]} times; this is a "
+                        f"structural issue even if classified as usage — "
+                        f"the agent's prompt or tools should prevent it"
+                    )
+                    break
+
         return LearningResult(
             lessons=data.get("lessons", []),
             memory_written=memory_written,
