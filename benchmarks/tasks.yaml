@@ -69,3 +69,27 @@
     not_contains:
       - "DEFAULT_PORT"
   weight: 1.5
+
+- id: read_handlers_report
+  instruction: >
+    Read fixtures/sample_project/handlers.py and report what the
+    handle_index function returns. State the exact return value.
+  scorer: exact_match
+  expected:
+    contains:
+      - "status"
+      - "ok"
+      - "port"
+  weight: 1.5
+
+- id: count_functions_in_handlers
+  instruction: >
+    How many function definitions (lines starting with "def") are in
+    fixtures/sample_project/handlers.py? Report just the count.
+  scorer: exact_match
+  expected:
+    contains:
+      - "8"
+    not_contains:
+      - "0"
+  weight: 1.0

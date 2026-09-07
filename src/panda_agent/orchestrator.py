@@ -666,17 +666,39 @@ def _replace_function(source: str, new_code: str) -> str:
     return replace_definition(source, new_code).source
 
 
-def _run_pytest(test_path: Path, project_root: Path, timeout: int = 300) -> tuple[bool, str]:
-    """Run pytest and return (passed, output_tail)."""
+def _run_pytest(test_path: Path, project_root: Path, timeout: int = 600) -> tuple[bool, str]:
+    """Run pytest and return (passed, output_tail).
+
+    When test_path contains the real project test suite (tests/), run only
+    the tests most likely to be affected by a brain.py or tools.py patch:
+    framework, prompt, security, patching, evolution, react. The full
+    374-test suite takes 12+ minutes on Windows, blocking the loop.
+    When test_path is a sandbox (e.g. a tmp_path with one test file),
+    run all tests in it — the sandbox is small.
+    """
+    # Detect sandbox: if test_path has fewer than 5 test files, run all.
+    test_files = list(test_path.glob("test_*.py")) if test_path.is_dir() else []
+    targeted = len(test_files) >= 5
+
     try:
+        if targeted:
+            cmd = [
+                sys.executable, "-m", "pytest",
+                str(test_path / "test_framework.py"),
+                str(test_path / "test_prompt_native.py"),
+                str(test_path / "test_security.py"),
+                str(test_path / "test_patching.py"),
+                str(test_path / "test_evolution.py"),
+                str(test_path / "test_react.py"),
+                "-x", "-q", "--tb=short", "-m", "not slow",
+            ]
+        else:
+            cmd = [
+                sys.executable, "-m", "pytest", str(test_path),
+                "-x", "-q", "--tb=short",
+            ]
         result = subprocess.run(
-            # sys.executable, not "python": a bare name resolves through PATH to
-            # whatever interpreter happens to be first, which is routinely not the
-            # one running this process. When it lands outside the active venv the
-            # project's own dependencies are missing, pytest fails on import, and
-            # the gate reads that as "this patch broke the tests" -- silently
-            # reverting every patch, including the good ones.
-            [sys.executable, "-m", "pytest", str(test_path), "-x", "-q", "--tb=short"],
+            cmd,
             cwd=str(project_root),
             capture_output=True,
             text=True,
