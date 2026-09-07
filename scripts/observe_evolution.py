@@ -176,17 +176,30 @@ def main(argv: list[str] | None = None) -> int:
     real_brain = _degrade_brain()
     degraded_prompt = _DEGRADED_BUILD_PROMPT
 
+    # The fixture file config.py gets modified by the apply_edit task.
+    # Without restoring it between benchmark runs, subsequent tasks see
+    # the modified state (e.g., DEFAULT_PORT=9090 instead of 8080),
+    # which makes read_and_report score 0 on a correct answer.
+    _FIXTURE_CONFIG = workspace / "fixtures" / "sample_project" / "config.py"
+    _FIXTURE_CONFIG_BACKUP = _save(_FIXTURE_CONFIG) if _FIXTURE_CONFIG.exists() else ""
+
+    def _restore_fixture():
+        if _FIXTURE_CONFIG_BACKUP:
+            _restore(_FIXTURE_CONFIG, _FIXTURE_CONFIG_BACKUP)
+
     # Run everything from the workspace so relative fixture paths resolve.
     orig_cwd = os.getcwd()
     os.chdir(str(workspace))
     train_runs: list[TrainTrace] = []
     try:
         # 2. Held-out baseline (degraded brain on disk).
+        _restore_fixture()
         test_before = run_benchmark(test_tasks, runner, workspace, config)
         test_before_by_id = test_before.by_id()
 
         # 3. Evolve across the train split. Patches accumulate.
         for task in train_tasks:
+            _restore_fixture()
             pre_brain = _save(_BRAIN)
             executor = Executor(config)
             evaluator = Evaluator(config, benchmark_tasks=train_tasks, workspace=workspace)
@@ -250,11 +263,13 @@ def main(argv: list[str] | None = None) -> int:
             ))
 
         # 4. Held-out after (evolved brain still on disk).
+        _restore_fixture()
         test_after = run_benchmark(test_tasks, runner, workspace, config)
         test_after_by_id = test_after.by_id()
     finally:
         os.chdir(orig_cwd)
         _restore(_BRAIN, real_brain)
+        _restore_fixture()
 
     # 5. Build the report.
     test_per_task = []

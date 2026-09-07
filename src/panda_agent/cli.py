@@ -360,9 +360,12 @@ def cmd_chat(args):
                             bt.instruction.strip() in user_input.strip()
                             or user_input.strip() in bt.instruction.strip()
                         ):
-                            answer = result.error or "completed"
-                            if result.success and result.tool_calls:
-                                answer = result.tool_calls[-1].get("result", answer)
+                            # Prefer the agent's final answer over raw tool result
+                            answer = result.answer or ""
+                            if not answer and result.success and result.tool_calls:
+                                answer = result.tool_calls[-1].get("result", "")
+                            if not answer:
+                                answer = result.error or "completed"
                             try:
                                 if bt.scorer == "exact_match":
                                     score = score_exact_match(bt, answer, workspace)
