@@ -408,11 +408,11 @@ class Learner:
             self._error_counts[pattern_key] = self._error_counts.get(pattern_key, 0) + 1
             self._save_error_counts()
 
-            if self._error_counts[pattern_key] >= 3:
+            if self._error_counts[pattern_key] >= 2:
                 trigger = True
                 trigger_reason = f"Structural issue seen {self._error_counts[pattern_key]} times: {structural_reason}"
             else:
-                trigger_reason = f"Structural issue identified (occurrence {self._error_counts[pattern_key]}/3): {structural_reason}"
+                trigger_reason = f"Structural issue identified (occurrence {self._error_counts[pattern_key]}/2): {structural_reason}"
 
         return LearningResult(
             lessons=data.get("lessons", []),

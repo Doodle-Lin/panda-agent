@@ -311,15 +311,10 @@ class TestLevel3Improvement:
                 r1 = learner.learn(Task("t"), ExecutionResult(success=False, error="err"), Evaluation(30))
             assert r1.trigger_evolution is False
 
-            # 2nd: no trigger
+            # 2nd: trigger!
             with patch("panda_agent.orchestrator.call_llm", return_value=mock_resp):
                 r2 = learner.learn(Task("t"), ExecutionResult(success=False, error="err"), Evaluation(30))
-            assert r2.trigger_evolution is False
-
-            # 3rd: trigger!
-            with patch("panda_agent.orchestrator.call_llm", return_value=mock_resp):
-                r3 = learner.learn(Task("t"), ExecutionResult(success=False, error="err"), Evaluation(30))
-            assert r3.trigger_evolution is True
+            assert r2.trigger_evolution is True
 
     def test_trigger_requires_low_score(self):
         """Level 3 should only trigger when score < 70 AND is_structural."""
