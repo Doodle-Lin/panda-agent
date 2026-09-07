@@ -348,19 +348,36 @@ def run_react(
     messages = [{"role": "system", "content": system}]
     messages.append({"role": "user", "content": task})
 
-    # Use the LARGER of config max_turns and task-based estimate.
-    # This ensures complex tasks (write, build, create) get enough turns
-    # even when config has a small default.
+    # No hard turn limit. The loop runs until the agent emits DONE:/FAILED:
+    # or gets stuck. Doom loop detection (same call 3x) and wall-clock
+    # timeout are the real guards against infinite loops — a fixed turn
+    # cap just truncates legitimate long tasks before they finish.
+    #
+    # For callers that still want a cap (e.g. the evolution loop's test
+    # runs), config.agent.max_turns > 0 is honored as an optional ceiling.
+    config_turns = config.agent.max_turns or 0  # 0 = unlimited
     task_turns = max_turns_for_task(task)
-    config_turns = config.agent.max_turns or 10
-    max_turns = max(task_turns, config_turns)
+    # Only use task-based estimate as a ceiling if config explicitly sets one.
+    if config_turns > 0:
+        max_turns = max(config_turns, task_turns)
+    else:
+        max_turns = 0  # unlimited
+
     tool_calls = []
     had_repair = False
     result = ReActResult()
     trace = ExecutionTrace(task=task, total_turns=max_turns)
 
-    for turn in range(1, max_turns + 1):
-        _emit("llm_start", f"Turn {turn}/{max_turns}")
+    turn = 0
+    while True:
+        turn += 1
+        # Break if optional turn cap is reached (0 = unlimited)
+        if max_turns > 0 and turn > max_turns:
+            break
+        if max_turns > 0:
+            _emit("llm_start", f"Turn {turn}/{max_turns}")
+        else:
+            _emit("llm_start", f"Turn {turn}")
 
         # Context compression: truncate old tool results when messages get too long
         messages = _compress_messages(messages, threshold=20000, preserve_recent=6)
@@ -649,38 +666,47 @@ def run_react(
         result.trace = trace
         return result
 
-    # Max turns exceeded — inject MAX_STEPS_PROMPT (soft limit, not hard cutoff)
-    _emit("max_turns", f"Reached max turns ({max_turns}), injecting MAX_STEPS_PROMPT...")
+    # Max turns reached (only when a cap is set). Inject salvage prompt.
+    if max_turns > 0:
+        _emit("max_turns", f"Reached max turns ({max_turns}), injecting salvage prompt...")
 
-    # Always try salvage — even without tool calls, LLM may have useful reasoning
-    _emit("llm_start", f"Turn {max_turns + 1} (salvage)")
-    salvage_messages = list(messages)
-    salvage_messages.append({
-        "role": "user",
-        "content": MAX_STEPS_PROMPT,
-    })
-    llm_resp = call_llm_detailed(salvage_messages, config.model)
-    if not llm_resp.is_error:
-        response = llm_resp.text
-        done = _parse_done(response)
-        if done:
-            _emit("done", done[:200])
-            result.success = True
-            result.answer = done
-            result.reasoning = llm_resp.reasoning
-            result.tool_calls = tool_calls
-            result.turns = max_turns
-            trace.final_success = True
-            trace.add_error(f"Max turns ({max_turns}) exceeded but salvaged")
-            result.trace = trace
-            return result
+        salvage_messages = list(messages)
+        salvage_messages.append({
+            "role": "user",
+            "content": MAX_STEPS_PROMPT,
+        })
+        llm_resp = call_llm_detailed(salvage_messages, config.model)
+        if not llm_resp.is_error:
+            response = llm_resp.text
+            done = _parse_done(response)
+            if done:
+                _emit("done", done[:200])
+                result.success = True
+                result.answer = done
+                result.reasoning = llm_resp.reasoning
+                result.tool_calls = tool_calls
+                result.turns = turn
+                trace.final_success = True
+                trace.add_error(f"Max turns ({max_turns}) exceeded but salvaged")
+                result.trace = trace
+                return result
 
-    # Could not salvage
-    _emit("failed", f"Max turns ({max_turns}) exceeded, could not complete task")
-    result.error = f"Max turns ({max_turns}) exceeded"
+        _emit("failed", f"Max turns ({max_turns}) exceeded, could not complete task")
+        result.error = f"Max turns ({max_turns}) exceeded"
+        result.tool_calls = tool_calls
+        result.turns = turn
+        trace.final_success = False
+        trace.add_error(f"Max turns ({max_turns}) exceeded")
+        result.trace = trace
+        return result
+
+    # No turn cap and the loop fell through without DONE:/FAILED: — this
+    # should not happen because the LLM always returns something, but guard
+    # against it so the process does not hang forever.
+    _emit("failed", "Loop ended without DONE:/FAILED:")
+    result.error = "Loop ended without DONE:/FAILED:"
     result.tool_calls = tool_calls
-    result.turns = max_turns
+    result.turns = turn
     trace.final_success = False
-    trace.add_error(f"Max turns ({max_turns}) exceeded — task may need more turns")
     result.trace = trace
     return result

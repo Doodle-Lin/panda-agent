@@ -55,7 +55,7 @@ class TestConfig:
     def test_config_defaults(self):
         c = Config()
         assert c.model.default == "gpt-4o"
-        assert c.agent.max_turns == 10
+        assert c.agent.max_turns == 0  # 0 = unlimited
         assert c.memory.enabled is True
         assert c.evolution.improve_brain is True
 

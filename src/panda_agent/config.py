@@ -26,7 +26,7 @@ class ModelConfig:
 
 @dataclass
 class AgentConfig:
-    max_turns: int = 10
+    max_turns: int = 0  # 0 = unlimited; doom loop detection is the real guard
     max_retries: int = 3
 
 
