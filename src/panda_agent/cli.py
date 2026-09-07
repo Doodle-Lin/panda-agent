@@ -389,17 +389,40 @@ def cmd_chat(args):
                 pass
 
             if score is None:
-                # Heuristic fallback
-                if result.success and result.tool_calls:
-                    score = 80.0
-                elif result.success:
-                    score = 60.0
-                else:
+                # Heuristic fallback. Reflect task QUALITY, not just
+                # completion: a task that used all available turns without
+                # producing a useful answer is not an 80, even if the
+                # ReAct loop technically returned success=True.
+                max_turns = config.agent.max_turns or 10
+                used_all_turns = result.turns >= max_turns
+                if not result.success:
                     score = 20.0
+                elif used_all_turns:
+                    # Consumed every turn — likely stuck or inefficient.
+                    # Score below the evolution trigger threshold so
+                    # recurring patterns get a chance to trigger.
+                    score = 50.0
+                elif result.tool_calls:
+                    score = 80.0
+                else:
+                    score = 60.0
                 if not result.tool_calls and result.success:
                     issues.append("Task completed without using any tools")
                 if result.error:
                     issues.append(f"Error: {result.error[:100]}")
+                if used_all_turns and result.success:
+                    issues.append(
+                        f"Task used all {max_turns} turns — may be stuck "
+                        f"or inefficient despite reporting success"
+                    )
+                    root_cause = (
+                        "agent exhausted all turns without converging on "
+                        "an efficient approach"
+                    )
+                    suggested_changes = (
+                        "add prompt guidance or tool improvements that "
+                        "help the agent complete similar tasks in fewer turns"
+                    )
 
             evaluation = Evaluation(
                 score=score, issues=issues,
