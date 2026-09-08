@@ -44,6 +44,8 @@ DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset({
     # Read-only inspection
     "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "diff", "file",
     "stat", "du", "tree", "sort", "uniq", "cut", "basename", "dirname",
+    # OS detection (needed by the agent to adapt paths/commands)
+    "ver", "uname", "whoami", "hostname",
     # Version control
     "git",
     # Package management (needed to install a dependency a patch introduces)
@@ -73,24 +75,22 @@ def allowed_commands() -> frozenset[str]:
 
 
 def parse_command(command: str) -> list[str]:
-    """Validate a command string and return it as an argv list.
+    """Validate a command string and return an argv list.
 
     Raises :class:`SecurityError` when the command is not on the allowlist or
-    contains shell metacharacters. Returning argv (rather than a string) is
-    what lets the caller drop ``shell=True`` entirely -- with no shell in the
-    picture, injection has nowhere to happen.
+    contains shell metacharacters **outside of quoted arguments**. Returning
+    argv (rather than a string) is what lets the caller drop ``shell=True``
+    entirely -- with no shell in the picture, injection has nowhere to happen.
+
+    ``|`` inside a quoted argument (e.g. ``grep -E "TODO|FIXME"``) is a
+    regex alternation, not a shell pipe -- it is safe because there is no
+    shell to interpret it. Only metacharacters that appear in the
+    **unquoted** part of the command string are blocked.
     """
     if not command or not command.strip():
         raise SecurityError("empty command")
 
-    found = _SHELL_METACHARACTERS & set(command)
-    if found:
-        raise SecurityError(
-            f"command contains shell metacharacters {sorted(found)}. "
-            "Chaining, pipes, redirection and substitution are not available; "
-            "run one command per call, or write a script and execute it."
-        )
-
+    # Parse into tokens first. shlex separates quoted from unquoted parts.
     try:
         argv = shlex.split(command)
     except ValueError as e:
@@ -98,6 +98,33 @@ def parse_command(command: str) -> list[str]:
 
     if not argv:
         raise SecurityError("empty command")
+
+    # Re-join the unquoted portions and check for metacharacters there.
+    # The quoted portions are safe: they are passed as literal argv
+    # elements, never interpreted by a shell.
+    # We reconstruct the "unquoted surface" by checking the original
+    # command string character by character, tracking quote state.
+    unquoted_chars: list[str] = []
+    in_single = False
+    in_double = False
+    for ch in command:
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif not in_single and not in_double:
+            unquoted_chars.append(ch)
+    unquoted_surface = "".join(unquoted_chars)
+
+    found = _SHELL_METACHARACTERS & set(unquoted_surface)
+    if found:
+        raise SecurityError(
+            f"command contains shell metacharacters {sorted(found)}. "
+            "Chaining, pipes, redirection and substitution are not available; "
+            "run one command per call, or write a script and execute it. "
+            "(Metacharacters inside quoted arguments are allowed — they "
+            "are passed as literal text, not interpreted by a shell.)"
+        )
 
     program = Path(argv[0]).name
     permitted = allowed_commands()

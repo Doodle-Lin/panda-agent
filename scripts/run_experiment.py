@@ -66,6 +66,7 @@ from panda_agent.types import Task
 _EVOLVABLE = [
     _REPO_ROOT / "src" / "panda_agent" / "tools.py",
     _REPO_ROOT / "src" / "panda_agent" / "brain.py",
+    _REPO_ROOT / "src" / "panda_agent" / "security.py",
 ]
 
 
