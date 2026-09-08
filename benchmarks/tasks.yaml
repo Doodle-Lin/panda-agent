@@ -93,3 +93,19 @@
     not_contains:
       - "0"
   weight: 1.0
+
+- id: count_defs_strict
+  instruction: >
+    Count all lines starting with "def " in src/panda_agent/tools.py.
+    Report ONLY the number. No other text, no explanation, no units.
+  scorer: exact_match
+  expected:
+    contains:
+      - "12"
+    not_contains:
+      - "function"
+      - "def "
+      - "total"
+      - "lines"
+      - "file"
+  weight: 1.5
