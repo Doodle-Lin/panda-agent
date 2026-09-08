@@ -1,23 +1,24 @@
 # 🐼 PandaAgent
 
-**An agent that rewrites its own tools to get better at your task — and only
+**An agent that rewrites its own code to get better at your task — and only
 keeps a rewrite that measurably helped.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-365%20passing-brightgreen.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-374%20passing-brightgreen.svg)](#tests)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 **English** · [简体中文](README.zh-CN.md)
 
 Point it at a task. It runs the task, scores how it did, finds what limited it,
 rewrites that part of itself, and re-runs to check the rewrite actually helped.
-If it didn't, the change is reverted.
+If it didn't, the change is reverted. You can see every evolution with
+`panda history` — the agent gets visibly better as you use it.
 
 ```
-                    ┌─────────────────────────────────────┐
-                    │         EVOLUTION LOOP              │
-                    └─────────────────────────────────────┘
+                    ┌─────────────────────────────────────────┐
+                    │         EVOLUTION LOOP                  │
+                    └─────────────────────────────────────────┘
 
    ┌──────────┐      ┌───────────┐      ┌──────────┐
    │ Executor │─────>│ Evaluator │─────>│ Improver │
@@ -29,8 +30,9 @@ If it didn't, the change is reverted.
         │            ┌──────────────┐          │
         └────────────│ tools.py     │<─────────┘
           re-run     │ brain.py     │
-          to verify  └──────────────┘
-                     "hands" & "mind"
+          to verify  │ security.py   │
+                     └──────────────┘
+                     "hands", "mind" & "rules"
 ```
 
 Three agents form a closed loop:
@@ -39,17 +41,18 @@ Three agents form a closed loop:
 |---|---|---|
 | **Executor** | Runs the task in a ReAct loop | Reads `brain.py` (prompt/strategy) + `tools.py` (capabilities) |
 | **Evaluator** | Scores the result 0–100, diagnoses root cause | Read-only |
-| **Improver** | Generates a patch, verifies it, keeps or reverts | Writes `tools.py` / `brain.py` |
+| **Improver** | Generates a patch, verifies it, keeps or reverts | Writes `tools.py` / `brain.py` / `security.py` |
 
-What makes this different: the agent evolves **both its "hands" (tools) and its
-"mind" (system prompt + decision logic)**, and every patch must survive a
-verification gate before it's kept.
+What makes this different: the agent evolves **all three layers of itself** —
+"hands" (tools), "mind" (system prompt + decision logic), and "rules" (security
+boundaries) — and every patch must survive a verification gate before it's kept.
 
 **Observed in practice** (see `docs/runs/`): the Improver has generated
 defensible patches to both `tools.py` (encoding fallback, filename matching,
 skip-directory fix) and `brain.py` (prompt recovery from a degraded baseline,
-preserving test constraints). The held-out evaluation caught a real overfit
-(evolved prompt hurt `recover_from_missing_file`: 100 → 0). See the
+preserving test constraints). Two self-evolved patches have been adopted into
+the real codebase. The held-out evaluation caught a real overfit (evolved
+prompt hurt `recover_from_missing_file`: 100 → 0). See the
 [experiment reports](docs/runs/) for traces and diffs.
 
 ---
@@ -63,15 +66,17 @@ preserving test constraints). The held-out evaluation caught a real overfit
 | ReAct loop + tool execution | ✅ Working | 8 registered tools: 6 task tools + 2 memory tools |
 | 3-agent evolution loop | ✅ Working | Executor → Evaluator → Improver |
 | Patch application | ✅ Working | libcst CST rewriting, auto-backup, revert on failure |
-| Brain evolution | ✅ Working | Patches prompt + decision logic |
-| CLI + TUI | ✅ Working | `panda`, `panda chat -q`, `panda evolve -t` |
+| Evolvable surface | ✅ Working | `tools.py` (hands) + `brain.py` (mind) + `security.py` (rules) |
+| CLI + TUI | ✅ Working | `panda`, `panda chat -q`, `panda evolve -t`, `panda history` |
 | **Regression gate** | ✅ Working | Optional gate rejects measured task regressions |
-| **Execution boundaries** | ✅ Working | Command allowlist + workspace containment |
+| **Execution boundaries** | ✅ Working | Command allowlist + workspace containment; quoted-arg metacharacters allowed |
 | Graph memory | ✅ Working | Embedded SQLite graph; persistent and dependency-free |
-| Evolution history → memory | ✅ Working | Task lessons and patch outcomes are persisted and retrievable |
+| Daily-use evolution | ✅ Working | Chat mode auto-learns and triggers evolution on recurring failures |
+| **Evolution visibility** | ✅ Working | Startup banner shows evolution count; `panda history` shows timeline |
+| LLM resilience | ✅ Working | Retry on transient failures + per-chunk streaming timeout |
 | OS-level sandbox | 🟡 Partial | Allowlist + path containment, but no kernel isolation. See [Security](#security) |
 
-**Current release evaluation: 365 passed, 6 skipped** across parsing, patching,
+**Current release evaluation: 374 passed, 1 skipped** across parsing, patching,
 benchmarking, memory, the orchestrator, and the security boundary. The skipped
 tests require a configured real LLM provider.
 
@@ -515,13 +520,35 @@ over LLM opinion where you can get them.
 python -m pytest tests/ -q
 ```
 
-The current clean-environment evaluation reports **365 passed, 6 skipped**.
+The current clean-environment evaluation reports **374 passed, 1 skipped**.
 The suite covers parsing, patching, benchmark gates, persistent memory,
 orchestration, and security boundaries. The exact count changes as regression
 coverage grows; the `quality` GitHub Actions check is the source of truth.
 
 The suite includes regression coverage for behaviour that was once broken,
 notably `test_patch_that_passes_tests_but_degrades_is_rejected`.
+
+---
+
+## Evolution Reports
+
+Every observation run is recorded in `docs/runs/` with the actual patch diff,
+per-round scores, and an honest diagnosis. See the full list at
+[docs/runs/](docs/runs/). Key findings:
+
+| Run | What evolved | Held-out delta |
+|---|---|---|
+| Initial (ceiling) | nothing (no headroom) | +0.0 |
+| Degraded baseline | tools.py (encoding fallback) | partial |
+| + test constraints | brain.py (prompt recovery) | -42.9 (overfit caught) |
+| + LLM retry | brain.py + tools.py (search) | partial |
+| Real baseline | tools.py (read_file BOM) | partial |
+| run_evolution KEPT | brain.py (prompt recovery) | +0.0 (ceiling) |
+| Evolve mode (real task) | tools.py (truncation fix) | score 40→kept |
+
+Two self-evolved patches have been adopted into the real codebase (PR #14):
+`utf-8-sig` BOM handling in `read_file` and path-component skip matching in
+`search_files`.
 
 ---
 
