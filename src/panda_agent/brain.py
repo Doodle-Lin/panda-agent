@@ -65,6 +65,12 @@ def should_retry(tool_name: str, error: str, retry_count: int, max_retries: int)
     return True
 
 
+#: Doom loop threshold: how many consecutive identical tool calls before
+#: the agent is warned to try a different approach. Evolvable — the
+#: Improver can lower this to make the agent break out of loops faster.
+DOOM_LOOP_THRESHOLD = 3
+
+
 def max_turns_for_task(task: str) -> int:
     """Determine max ReAct turns based on task complexity.
 

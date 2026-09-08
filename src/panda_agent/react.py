@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .brain import build_system_prompt, max_turns_for_task
+from . import brain as _brain  # read DOOM_LOOP_THRESHOLD at call time, not import
 from .config import Config
 from .llm import call_llm_detailed
 from .tools import execute_tool, get_tool_descriptions, get_tool_schemas
@@ -105,18 +106,20 @@ class ReActResult:
 # ---------------------------------------------------------------------------
 
 def _check_doom_loop(tool_calls: list[dict]) -> bool:
-    """Return True if the last 3 tool calls are identical (same name + same args).
+    """Return True if the last DOOM_LOOP_THRESHOLD tool calls are identical.
 
-    Inspired by opencode's processor.ts DOOM_LOOP_THRESHOLD = 3.
-    Different args = agent trying different approaches = NOT doom loop.
+    The threshold is defined in brain.py and is evolvable — the Improver
+    can lower it to make the agent break out of loops faster. Read at
+    call time (not import time) so patches take effect immediately.
     """
-    if len(tool_calls) < 3:
+    threshold = _brain.DOOM_LOOP_THRESHOLD
+    if len(tool_calls) < threshold:
         return False
-    last3 = tool_calls[-3:]
-    first = last3[0]
+    last = tool_calls[-threshold:]
+    first = last[0]
     return all(
         tc["name"] == first["name"] and tc["args"] == first["args"]
-        for tc in last3
+        for tc in last
     )
 
 
