@@ -552,6 +552,7 @@ ONLY that one definition — not the whole file. Same output format.
 # Source paths that can be evolved
 _TOOLS_PATH = Path(__file__).parent / "tools.py"
 _BRAIN_PATH = Path(__file__).parent / "brain.py"
+_SECURITY_PATH = Path(__file__).parent / "security.py"
 
 
 def _extract_relevant(source: str, eval_data: Evaluation, keywords: list[str]) -> str:
@@ -859,6 +860,9 @@ class Improver:
         if self.config.evolution.improve_brain:
             r = self._improve_file(_BRAIN_PATH, evaluation, ["prompt", "strategy", "decision", "retry", "turn"])
             results.append(("brain", r))
+        # Then try improving security.py
+        r = self._improve_file(_SECURITY_PATH, evaluation, ["command", "allow", "security", "path", "parse"])
+        results.append(("security", r))
 
         # Return the first successful patch
         for name, r in results:
@@ -1087,7 +1091,7 @@ def run_evolution(
     total_patches = 0
     best_round: int | None = None
     snapshots: dict[int, dict[Path, str]] = {}
-    evolvable = [p for p in (_TOOLS_PATH, _BRAIN_PATH) if p.exists()]
+    evolvable = [p for p in (_TOOLS_PATH, _BRAIN_PATH, _SECURITY_PATH) if p.exists()]
 
     def _emit(et, msg, rnd, data=None):
         if on_event:
