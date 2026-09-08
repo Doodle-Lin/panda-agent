@@ -424,6 +424,18 @@ class Learner:
                 self._error_counts[normalized] = self._error_counts.get(normalized, 0) + 1
         self._save_error_counts()
 
+        # Also track the raw error message from the execution result.
+        # When the agent hits 'Doom loop' or 'Max turns' the error is
+        # always the same string — but the LLM's recurring_errors may
+        # phrase it differently each time. Using the raw error as a
+        # fallback pattern catches what the LLM misses.
+        if evaluation and evaluation.issues:
+            for issue in evaluation.issues:
+                issue_lower = issue.strip().lower()[:100]
+                if issue_lower:
+                    self._error_counts[issue_lower] = self._error_counts.get(issue_lower, 0) + 1
+        self._save_error_counts()
+
         # Check if Level 3 should trigger
         trigger = False
         trigger_reason = ""
@@ -448,18 +460,40 @@ class Learner:
         # back IS a structural problem — the LLM may classify it as a
         # "usage mistake", but if the same mistake happens every time, the
         # agent's prompt or tools are not preventing it, which is structural.
-        if not trigger and evaluation.score < 70 and recurring:
-            for pattern in recurring:
-                normalized = pattern.strip().lower()[:100]
-                if normalized and self._error_counts.get(normalized, 0) >= 2:
-                    trigger = True
-                    trigger_reason = (
-                        f"Recurring error '{pattern[:60]}' seen "
-                        f"{self._error_counts[normalized]} times; this is a "
-                        f"structural issue even if classified as usage — "
-                        f"the agent's prompt or tools should prevent it"
-                    )
-                    break
+        if not trigger and evaluation.score < 70:
+            # Check recurring_errors from the LLM
+            if recurring:
+                for pattern in recurring:
+                    normalized = pattern.strip().lower()[:100]
+                    for sep in (" which ", " despite ", " causing ", " — ", " - "):
+                        if sep in normalized:
+                            normalized = normalized.split(sep)[0].strip()
+                    normalized = normalized[:60]
+                    if normalized and self._error_counts.get(normalized, 0) >= 2:
+                        trigger = True
+                        trigger_reason = (
+                            f"Recurring error '{pattern[:60]}' seen "
+                            f"{self._error_counts[normalized]} times; this is a "
+                            f"structural issue even if classified as usage — "
+                            f"the agent's prompt or tools should prevent it"
+                        )
+                        break
+            # Also check evaluation.issues (raw, from the scoring layer).
+            # These are more stable than LLM-generated recurring_errors
+            # because they come from the deterministic scorer or the
+            # heuristic, not the LLM's free-text analysis.
+            if not trigger and evaluation.issues:
+                for issue in evaluation.issues:
+                    issue_key = issue.strip().lower()[:100]
+                    if issue_key and self._error_counts.get(issue_key, 0) >= 2:
+                        trigger = True
+                        trigger_reason = (
+                            f"Recurring issue '{issue[:60]}' seen "
+                            f"{self._error_counts[issue_key]} times — "
+                            f"this is a structural defect the agent should "
+                            f"be able to prevent"
+                        )
+                        break
 
         return LearningResult(
             lessons=data.get("lessons", []),
