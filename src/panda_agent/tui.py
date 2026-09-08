@@ -21,10 +21,12 @@ class TUI:
         self.console = Console(force_terminal=color != "off")
 
     def banner(self):
-        """Print the PandaAgent banner."""
+        """Print the PandaAgent banner with evolution status."""
+        from .evolution_history import evolution_summary
+        evo_info = evolution_summary() or ""
         self.console.print(
             Panel(
-                "[bold green]PandaAgent[/] — Self-Evolving Agent\n"
+                f"[bold green]PandaAgent[/] — Self-Evolving Agent{evo_info}\n"
                 "[dim]Type your task, or 'exit' to quit[/]",
                 border_style="green",
                 padding=(0, 2),

@@ -266,7 +266,7 @@ def main():
     sub.add_parser("tools", help="List available tools")
 
     # history
-    sub.add_parser("history", help="View evolution history")
+    sub.add_parser("history", help="View evolution history — see how the agent has improved")
 
     args = parser.parse_args()
 
@@ -439,8 +439,36 @@ def cmd_chat(args):
                 tui.event("learner_trigger", f"⚠ Auto-evolving: {learning.trigger_reason[:100]}")
                 improvement = improver.improve(evaluation)
                 if improvement.patched:
-                    tui.event("improver_done", f"✓ Auto-patched: {improvement.explanation[:100]}")
+                    # Record to evolution history for user visibility
+                    from .evolution_history import record_evolution
+                    record_evolution(
+                        source_file="brain.py/tools.py/security.py",
+                        root_cause=evaluation.root_cause,
+                        suggested_changes=evaluation.suggested_changes,
+                        patched=True,
+                        explanation=improvement.explanation,
+                        test_output=improvement.test_output,
+                        attempts=improvement.attempts,
+                        score=evaluation.score,
+                    )
+                    # Show a human-readable summary, not just "Auto-patched"
+                    summary = improvement.explanation[:200] if improvement.explanation else "improvement applied"
+                    tui.event("improver_done",
+                        f"✓ Evolution applied: {summary}")
+                    tui.event("improver_detail",
+                        "  Tests passed. The agent has been improved for future tasks.")
                 else:
+                    from .evolution_history import record_evolution
+                    record_evolution(
+                        source_file="brain.py/tools.py/security.py",
+                        root_cause=evaluation.root_cause,
+                        suggested_changes=evaluation.suggested_changes,
+                        patched=False,
+                        explanation=improvement.explanation,
+                        test_output=improvement.test_output,
+                        attempts=improvement.attempts,
+                        score=evaluation.score,
+                    )
                     tui.event("improver_detail", f"Patch attempt: {improvement.explanation[:100]}")
         except Exception:
             # Learning should never crash the chat
@@ -649,33 +677,9 @@ def cmd_tools():
 
 
 def cmd_history(args):
-    """Handle history command — view evolution audit trail."""
-    import json
-    panda_home = os.environ.get("PANDA_HOME", os.path.expanduser("~/.panda"))
-    history_file = os.path.join(panda_home, "evolution_history.jsonl")
-
-    if not os.path.exists(history_file):
-        print("No evolution history found. Run 'panda evolve -t <task>' first.")
-        return
-
-    print(f"{'Round':>5}  {'Score':>5}  {'Bench':>6}  {'Patched':>12}  {'Status':>8}  Reason")
-    print("-" * 80)
-
-    with open(history_file, encoding="utf-8") as f:
-        for line in f:
-            try:
-                entry = json.loads(line)
-                rnd = entry.get("round", "?")
-                score = entry.get("score", 0)
-                bench_delta = entry.get("benchmark_delta", "")
-                patched = entry.get("patched_file", "-")
-                status = entry.get("accepted", False)
-                status_str = "kept" if status else "reject"
-                reason = entry.get("reason", "")[:40]
-                bench_str = f"{bench_delta:+.1f}" if isinstance(bench_delta, (int, float)) else str(bench_delta)
-                print(f"{rnd:>5}  {score:>5.0f}  {bench_str:>6}  {patched:>12}  {status_str:>8}  {reason}")
-            except (json.JSONDecodeError, KeyError):
-                continue
+    """Handle history command — view evolution timeline."""
+    from .evolution_history import format_history_table
+    print(format_history_table())
 
 
 if __name__ == "__main__":
