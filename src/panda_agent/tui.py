@@ -1,10 +1,11 @@
 """TUI renderer — Rich-based terminal UI for PandaAgent.
 
-Display layers:
-- Reasoning (thinking): dim italic, indented, smaller visual weight
-- Actions (tool calls, results): normal weight, color-coded
-- Answers (DONE): bold, boxed
-- Evolve events: structured progress display
+Design principles (inspired by Claude CLI / Hermes):
+- User input and agent answers are the visual focus (bold, boxed)
+- Reasoning/thinking is collapsed to one line ("thinking...")
+- Tool calls are compact one-liners: ⚡ tool_name(key_arg=value)
+- Tool results are folded: first 80 chars + [N more]
+- Process noise is dim and minimal — not the main attraction
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ class TUI:
         evo_info = evolution_summary() or ""
         self.console.print(
             Panel(
-                f"[bold green]PandaAgent[/] — Self-Evolving Agent{evo_info}\n"
+                f"[bold green]🐼 PandaAgent[/] — Self-Evolving Agent{evo_info}\n"
                 "[dim]Type your task, or 'exit' to quit[/]",
                 border_style="green",
                 padding=(0, 2),
@@ -34,109 +35,132 @@ class TUI:
         )
 
     def user_input(self) -> str:
-        """Get user input."""
-        return Prompt.ask("[bold cyan]You[/]")
+        """Get user input — visually prominent."""
+        return Prompt.ask("\n[bold cyan]You[/]")
 
     def reasoning(self, turn_label: str, text: str):
-        """Display reasoning/thinking process in dim italic — visually smaller.
+        """Display reasoning as a single collapsed line, not full text.
 
-        This is the model's thinking, distinct from its actions.
-        Uses dim + italic + indent to create visual hierarchy:
-        thinking is background context, actions are foreground.
+        Reasoning models (GLM-5.2) output hundreds of chars of thinking.
+        Showing it all floods the terminal and buries the important stuff.
+        Show just a compact indicator that the agent is thinking.
         """
-        # Truncate very long reasoning for terminal readability
-        display = text if len(text) <= 600 else text[:600] + " ..."
-        # Indent each line for visual nesting
-        lines = display.splitlines()
-        for line in lines:
-            self.console.print(f"    [dim italic]{line}[/]")
+        # One dim line — not the full reasoning text
+        self.console.print("  [dim]thinking...[/]")
 
     def event(self, event_type: str, message: str):
-        """Display a ReAct event."""
+        """Display a ReAct event — compact, hierarchical, not noisy."""
         if event_type == "llm_start":
-            self.console.print(f"  [dim]{message}[/]")
+            # Don't print turn numbers — they're noise. The tool calls
+            # and results show what's happening; turn counters add clutter.
+            pass
         elif event_type == "llm_thinking":
-            self.console.print(f"  [dim italic]{message}[/]")
+            pass  # handled by reasoning()
         elif event_type == "llm_error":
-            self.console.print(f"  [red]{message}[/]")
+            self.console.print(f"  [red]✗ {message}[/]")
         elif event_type == "tool_call":
-            # Fold long tool calls — especially write_file which can have
-            # thousands of chars of content. Show first 120 chars + [N more].
-            if len(message) > 160:
-                self.console.print(f"  [yellow]>>>{message[:120]} [dim]...[{len(message)-120} more chars][/][/]")
-            else:
-                self.console.print(f"  [yellow]>>>{message}[/]")
+            # Compact: ⚡ tool_name(arg_summary)
+            # Extract just the tool name and key arg for a one-liner
+            compact = self._compact_tool_call(message)
+            self.console.print(f"  [yellow]⚡ {compact}[/]")
         elif event_type == "self_repair":
-            self.console.print(f"  [bold magenta]{message}[/]")
+            self.console.print(f"  [magenta]↳ {message[:80]}[/]")
         elif event_type == "tool_result":
-            # Fold long tool results — show first 150 chars + [N more]
-            if len(message) > 180:
-                self.console.print(f"  [blue]{message[:150]} [dim]...[{len(message)-150} more][/][/]")
+            # Fold: first 80 chars + [N more]
+            if len(message) > 100:
+                self.console.print(f"  [blue]→ {message[:80]} [dim]...[{len(message)-80} more][/][/]")
             else:
-                self.console.print(f"  [blue]{message}[/]")
+                self.console.print(f"  [blue]→ {message}[/]")
         elif event_type == "done":
             self.console.print("  [green]✓ Done[/]")
         elif event_type == "failed":
             self.console.print(
-                Panel(message, title="[red]Failed[/]", border_style="red")
+                Panel(message, title="[red]Failed[/]", border_style="red", padding=(0, 2))
             )
         elif event_type == "max_turns":
-            self.console.print(f"  [yellow]{message}[/]")
+            self.console.print(f"  [yellow]⚠ {message}[/]")
         elif event_type == "memory_used":
-            self.console.print(f"  [cyan]{message}[/]")
+            self.console.print(f"  [cyan]💾 {message}[/]")
         elif event_type == "doom_loop":
-            self.console.print(f"  [bold red]{message}[/]")
+            self.console.print(f"  [bold red]⚠ {message[:100]}[/]")
         elif event_type == "memory_tidy":
-            self.console.print(f"  [dim]{message}[/]")
-        # === Evolve events ===
+            self.console.print(f"  [dim]{message[:60]}[/]")
+        # === Evolve events — compact ===
         elif event_type == "executor_start":
-            self.console.print(f"\n[bold cyan]{message}[/]")
-        elif event_type == "executor_tools":
-            self.console.print(f"  [dim]🔧 {message}[/]")
+            self.console.print(f"\n  [dim]▶ {message}[/]")
         elif event_type == "executor_done":
             self.console.print(f"  [green]{message}[/]")
-        elif event_type == "learner_start":
-            self.console.print(f"  [dim]{message}[/]")
-        elif event_type == "learner_done":
-            self.console.print(f"  [cyan]{message}[/]")
         elif event_type == "learner_detail":
-            self.console.print(f"  [dim italic]{message}[/]")
+            self.console.print(f"  [dim]💡 {message[:80]}[/]")
         elif event_type == "learner_trigger":
-            self.console.print(f"  [bold yellow]{message}[/]")
-        elif event_type == "evaluator_start":
-            self.console.print(f"  [dim]{message}[/]")
-        elif event_type == "evaluator_done":
-            self.console.print(f"  [bold yellow]{message}[/]")
-        elif event_type == "score_trend":
-            self.console.print(f"  [dim]{message}[/]")
-        elif event_type == "eval_issue":
-            self.console.print(f"  [yellow]{message}[/]")
-        elif event_type == "target_reached":
-            self.console.print(f"  [bold green]{message}[/]")
-        elif event_type == "stale_stop":
-            self.console.print(f"  [yellow]{message}[/]")
-        elif event_type == "improver_start":
-            self.console.print(f"  [dim]{message}[/]")
+            self.console.print(f"  [bold yellow]⚠ {message[:100]}[/]")
         elif event_type == "improver_done":
-            if "✓" in message:
-                self.console.print(f"  [green]{message}[/]")
+            if "✓" in message or "Evolution" in message:
+                self.console.print(f"  [green]{message[:120]}[/]")
             else:
-                self.console.print(f"  [red]{message}[/]")
+                self.console.print(f"  [red]{message[:120]}[/]")
         elif event_type == "improver_detail":
-            self.console.print(f"  [dim italic]{message}[/]")
-        elif event_type == "improver_error":
-            self.console.print(f"  [red]{message}[/]")
-        elif event_type == "round_end":
-            self.console.print(f"  [dim]{message}[/]")
+            self.console.print(f"  [dim]{message[:80]}[/]")
         elif event_type == "complete":
-            self.console.print(f"\n[bold green]{message}[/]")
+            self.console.print(f"\n  [bold green]{message}[/]")
+        # === Suppress noisy events ===
+        elif event_type in (
+            "executor_tools", "learner_start", "learner_done",
+            "evaluator_start", "evaluator_done", "score_trend",
+            "eval_issue", "target_reached", "stale_stop",
+            "improver_start", "improver_error", "round_end",
+        ):
+            # These are evolve-internal events that clutter the output.
+            # Only show them if something important happened (handled above).
+            pass
         else:
-            self.console.print(f"  [dim]{event_type}: {message}[/]")
+            self.console.print(f"  [dim]{event_type}: {message[:60]}[/]")
+
+    def _compact_tool_call(self, message: str) -> str:
+        """Extract a compact one-line summary of a tool call.
+
+        Input format: 'tool_name({'key': 'value', ...})'
+        Output: 'tool_name(key=value)'
+        """
+        # The message is typically: run_command({'command': 'ls -la', 'timeout': 10})
+        # or: write_file({'path': 'C:/Users/...', 'content': '...long...'})
+        # Extract tool name and first 1-2 args for a compact display.
+        import re
+
+        # Try to parse "tool_name({...})"
+        m = re.match(r"(\w+)\((\{.*\})\)", message)
+        if not m:
+            # Fallback: just truncate the raw message
+            return message[:80]
+
+        tool_name = m.group(1)
+        try:
+            import json
+            args = json.loads(m.group(2))
+            # Show 1-2 key args, truncate values
+            parts = []
+            for i, (k, v) in enumerate(args.items()):
+                if i >= 2:
+                    break
+                v_str = str(v)
+                if len(v_str) > 40:
+                    v_str = v_str[:37] + "..."
+                parts.append(f"{k}={v_str}")
+            if len(args) > 2:
+                parts.append(f"...+{len(args)-2}")
+            return f"{tool_name}({', '.join(parts)})"
+        except Exception:
+            return f"{tool_name}(...)"
 
     def answer(self, text: str):
-        """Display the final answer."""
+        """Display the final answer — the visual focal point."""
         self.console.print(
-            Panel(text, title="[bold green]Answer[/]", border_style="green")
+            Panel(
+                text,
+                title="[bold green]✓ Answer[/]",
+                border_style="green",
+                padding=(1, 2),
+            )
         )
 
     def error(self, text: str):
