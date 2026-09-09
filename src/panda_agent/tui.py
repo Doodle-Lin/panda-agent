@@ -60,7 +60,12 @@ class TUI:
         elif event_type == "llm_error":
             self.console.print(f"  [red]{message}[/]")
         elif event_type == "tool_call":
-            self.console.print(f"  [yellow]>>>{message}[/]")
+            # Fold long tool calls — especially write_file which can have
+            # thousands of chars of content. Show first 120 chars + [N more].
+            if len(message) > 160:
+                self.console.print(f"  [yellow]>>>{message[:120]} [dim]...[{len(message)-120} more chars][/][/]")
+            else:
+                self.console.print(f"  [yellow]>>>{message}[/]")
         elif event_type == "self_repair":
             self.console.print(f"  [bold magenta]{message}[/]")
         elif event_type == "tool_result":
