@@ -59,18 +59,23 @@ class TUI:
         elif event_type == "llm_error":
             self.console.print(f"  [red]✗ {message}[/]")
         elif event_type == "tool_call":
-            # Compact: ⚡ tool_name(arg_summary)
-            # Extract just the tool name and key arg for a one-liner
+            # Only show file operations (user cares about files being
+            # created/modified). Suppress run_command/read_file/etc —
+            # they're internal plumbing the user doesn't need to see.
             compact = self._compact_tool_call(message)
-            self.console.print(f"  [yellow]⚡ {compact}[/]")
+            if compact.startswith("write_file") or compact.startswith("patch_file"):
+                self.console.print(f"  [yellow]⚡ {compact}[/]")
+            # else: suppress — don't print read/search/run_command calls
         elif event_type == "self_repair":
             self.console.print(f"  [magenta]↳ {message[:80]}[/]")
         elif event_type == "tool_result":
-            # Fold: first 80 chars + [N more]
-            if len(message) > 100:
-                self.console.print(f"  [blue]→ {message[:80]} [dim]...[{len(message)-80} more][/][/]")
-            else:
-                self.console.print(f"  [blue]→ {message}[/]")
+            # Only show errors and file write confirmations.
+            # Successful command outputs are internal noise.
+            if message.startswith("Error") or message.startswith("ERROR"):
+                self.console.print(f"  [red]→ {message[:100]}[/]")
+            elif message.startswith("Wrote ") or message.startswith("Patched "):
+                self.console.print(f"  [green]→ {message[:80]}[/]")
+            # else: suppress all other results
         elif event_type == "done":
             self.console.print("  [green]✓ Done[/]")
         elif event_type == "failed":
