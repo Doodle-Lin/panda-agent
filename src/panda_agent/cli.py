@@ -395,22 +395,43 @@ def cmd_chat(args):
                 # ReAct loop technically returned success=True.
                 max_turns = config.agent.max_turns or 10
                 used_all_turns = result.turns >= max_turns
+
+                # Detect conversational / no-tool-needed tasks so we
+                # don't penalize the agent for correctly not calling
+                # tools on greetings, questions, and casual chat.
+                # The prompt already says "If no tool is needed (e.g.,
+                # greeting, question, chat), immediately output DONE."
+                conversational_keywords = [
+                    "你好", "在吗", "在不在", "hi", "hello", "hey",
+                    "谢谢", "thanks", "再见", "bye", "ok", "好的",
+                    "what is", "what's", "explain", "how are you",
+                    "你是谁", "你能做什么", "帮助", "help me understand",
+                ]
+                user_lower = user_input.strip().lower()
+                is_conversational = (
+                    len(user_input.strip()) < 30
+                    and any(kw in user_lower for kw in conversational_keywords)
+                )
+
                 if not result.success:
                     score = 20.0
+                elif is_conversational:
+                    # Greetings and simple questions don't need tools.
+                    # Scoring 80 with no issues prevents false evolution triggers.
+                    score = 80.0
                 elif used_all_turns:
-                    # Consumed every turn — likely stuck or inefficient.
-                    # Score below the evolution trigger threshold so
-                    # recurring patterns get a chance to trigger.
                     score = 50.0
                 elif result.tool_calls:
                     score = 80.0
                 else:
+                    # Succeeded without tools but not obviously conversational.
+                    # This MIGHT be a real issue (agent should have used tools)
+                    # so keep the low score and the issue.
                     score = 60.0
-                if not result.tool_calls and result.success:
                     issues.append("Task completed without using any tools")
                 if result.error:
                     issues.append(f"Error: {result.error[:100]}")
-                if used_all_turns and result.success:
+                if used_all_turns and result.success and not is_conversational:
                     issues.append(
                         f"Task used all {max_turns} turns — may be stuck "
                         f"or inefficient despite reporting success"
