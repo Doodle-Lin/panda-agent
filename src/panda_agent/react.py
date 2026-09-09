@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .brain import build_system_prompt, max_turns_for_task
-from . import brain as _brain  # read DOOM_LOOP_THRESHOLD at call time, not import
 from .config import Config
 from .llm import call_llm_detailed
 from .tools import execute_tool, get_tool_descriptions, get_tool_schemas
@@ -106,20 +105,75 @@ class ReActResult:
 # ---------------------------------------------------------------------------
 
 def _check_doom_loop(tool_calls: list[dict]) -> bool:
-    """Return True if the last DOOM_LOOP_THRESHOLD tool calls are identical.
+    """Return True if the last 3 tool calls are identical (same name + same args).
 
-    The threshold is defined in brain.py and is evolvable — the Improver
-    can lower it to make the agent break out of loops faster. Read at
-    call time (not import time) so patches take effect immediately.
+    Different args = agent trying different approaches = NOT doom loop.
     """
-    threshold = _brain.DOOM_LOOP_THRESHOLD
-    if len(tool_calls) < threshold:
+    if len(tool_calls) < 3:
         return False
-    last = tool_calls[-threshold:]
-    first = last[0]
+    last3 = tool_calls[-3:]
+    first = last3[0]
     return all(
         tc["name"] == first["name"] and tc["args"] == first["args"]
-        for tc in last
+        for tc in last3
+    )
+
+
+def _build_doom_loop_warning(tool_calls: list[dict]) -> str:
+    """Build a contextual warning that helps the agent break out of a loop.
+
+    Instead of a generic 'stop repeating', this tells the agent exactly
+    what it has been repeating and what the result was, so it can
+    process the result and move on.
+    """
+    last = tool_calls[-1]
+    name = last["name"]
+    result = last.get("result", "")
+
+    # Summarize what the agent has already accomplished
+    done_summary = []
+    seen_tools = set()
+    for tc in tool_calls:
+        key = (tc["name"], json.dumps(tc.get("args", {}), sort_keys=True))
+        if key not in seen_tools:
+            seen_tools.add(key)
+            done_summary.append(f"  - {tc['name']}({tc.get('args', {})})")
+
+    return (
+        f"You have called {name} with the same arguments 3 times in a row. "
+        f"The result was: {str(result)[:200]}. "
+        f"You have already completed these steps:\n"
+        + "\n".join(done_summary[-10:])
+        + f"\n\nDo NOT call {name} with the same arguments again. "
+        f"Process the result you already have and move to the next step. "
+        f"If the task is done, output DONE: with a summary. "
+        f"If you are stuck, output FAILED: with the reason."
+    )
+
+
+def _build_salvage_prompt(tool_calls: list[dict]) -> str:
+    """Build a salvage prompt when the agent is stuck after a doom loop.
+
+    Instead of failing outright, this gives the agent one final chance
+    to summarize what it has already accomplished.
+    """
+    done_summary = []
+    seen_tools = set()
+    for tc in tool_calls:
+        key = (tc["name"], json.dumps(tc.get("args", {}), sort_keys=True))
+        if key not in seen_tools:
+            seen_tools.add(key)
+            result = str(tc.get("result", ""))[:100]
+            done_summary.append(f"  - {tc['name']}({tc.get('args', {})}) -> {result}")
+
+    return (
+        "You appear to be stuck. Here is what you have already accomplished:\n"
+        + "\n".join(done_summary[-15:])
+        + "\n\nPlease review what you have done so far. "
+        "If the task is complete or partially complete, output DONE: "
+        "with a summary of what was accomplished. "
+        "If you cannot complete it, output FAILED: with the reason. "
+        "Do NOT make any more tool calls."
     )
 
 
@@ -482,19 +536,37 @@ def run_react(
                 # === Doom loop detection ===
                 simple_calls = [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls]
                 if _check_doom_loop(simple_calls):
-                    _emit("doom_loop", "  ⚠ Detected repeated tool calls — injecting warning")
+                    _emit("doom_loop", "  ⚠ Detected repeated tool calls — injecting guidance")
                     trace.add_error(f"Turn {turn}: doom loop — same call 3x")
                     messages.append({
                         "role": "user",
-                        "content": (
-                            "WARNING: You have called the same tool with the same arguments 3 times in a row. "
-                            "This is not making progress. Try a completely different approach or tool. "
-                            "If you are stuck, output DONE: or FAILED: with an explanation."
-                        ),
+                        "content": _build_doom_loop_warning(tool_calls),
                     })
                     if len(simple_calls) >= 4 and _check_doom_loop(simple_calls[-3:]):
-                        _emit("failed", "Doom loop — agent stuck repeating same tool call")
-                        result.error = "Doom loop: repeated same tool call 3x after warning"
+                        # Still repeating after warning: try salvage before failing
+                        _emit("doom_loop", "  ⚠ Still stuck — attempting salvage...")
+                        salvage_messages = list(messages)
+                        salvage_messages.append({
+                            "role": "user",
+                            "content": _build_salvage_prompt(tool_calls),
+                        })
+                        salvage_resp = call_llm_detailed(salvage_messages, config.model)
+                        if not salvage_resp.is_error:
+                            done = _parse_done(salvage_resp.text)
+                            if done:
+                                _emit("done", done[:200])
+                                result.success = True
+                                result.answer = done
+                                result.reasoning = salvage_resp.reasoning
+                                result.tool_calls = tool_calls
+                                result.turns = turn
+                                trace.final_success = True
+                                trace.add_error(f"Turn {turn}: doom loop but salvaged")
+                                result.trace = trace
+                                return result
+
+                        _emit("failed", "Doom loop — could not salvage after warning")
+                        result.error = "Doom loop: repeated same tool call after warning"
                         result.tool_calls = tool_calls
                         result.turns = turn
                         trace.final_success = False
@@ -568,22 +640,39 @@ def run_react(
             # === Doom loop detection ===
             simple_calls = [{"name": tc["name"], "args": tc["args"]} for tc in tool_calls]
             if _check_doom_loop(simple_calls):
-                _emit("doom_loop", "  ⚠ Detected repeated tool calls — injecting warning")
+                _emit("doom_loop", "  ⚠ Detected repeated tool calls — injecting guidance")
                 trace.add_error(f"Turn {turn}: doom loop — same call 3x")
-                # Inject warning prompt, give LLM one more chance
+                # Inject contextual warning, give LLM one more chance
                 messages.append({"role": "assistant", "content": response})
                 messages.append({
                     "role": "user",
-                    "content": (
-                        "WARNING: You have called the same tool with the same arguments 3 times in a row. "
-                        "This is not making progress. Try a completely different approach or tool. "
-                        "If you are stuck, output DONE: or FAILED: with an explanation."
-                    ),
+                    "content": _build_doom_loop_warning(tool_calls),
                 })
-                # Check again after this turn — if still repeating, fail
+                # Check again after this turn — if still repeating, try salvage
                 if len(simple_calls) >= 4 and _check_doom_loop(simple_calls[-3:]):
-                    _emit("failed", "Doom loop — agent stuck repeating same tool call")
-                    result.error = "Doom loop: repeated same tool call 3x after warning"
+                    _emit("doom_loop", "  ⚠ Still stuck — attempting salvage...")
+                    salvage_messages = list(messages)
+                    salvage_messages.append({
+                        "role": "user",
+                        "content": _build_salvage_prompt(tool_calls),
+                    })
+                    salvage_resp = call_llm_detailed(salvage_messages, config.model)
+                    if not salvage_resp.is_error:
+                        done = _parse_done(salvage_resp.text)
+                        if done:
+                            _emit("done", done[:200])
+                            result.success = True
+                            result.answer = done
+                            result.reasoning = salvage_resp.reasoning
+                            result.tool_calls = tool_calls
+                            result.turns = turn
+                            trace.final_success = True
+                            trace.add_error(f"Turn {turn}: doom loop but salvaged")
+                            result.trace = trace
+                            return result
+
+                    _emit("failed", "Doom loop — could not salvage after warning")
+                    result.error = "Doom loop: repeated same tool call after warning"
                     result.tool_calls = tool_calls
                     result.turns = turn
                     trace.final_success = False
