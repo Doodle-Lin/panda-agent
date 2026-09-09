@@ -393,8 +393,10 @@ def cmd_chat(args):
                 # completion: a task that used all available turns without
                 # producing a useful answer is not an 80, even if the
                 # ReAct loop technically returned success=True.
-                max_turns = config.agent.max_turns or 10
-                used_all_turns = result.turns >= max_turns
+                # When max_turns=0 (unlimited), there is no turn cap to
+                # exhaust, so this check is skipped.
+                max_turns = config.agent.max_turns or 0
+                used_all_turns = max_turns > 0 and result.turns >= max_turns
 
                 # Detect conversational / no-tool-needed tasks so we
                 # don't penalize the agent for correctly not calling
