@@ -39,14 +39,30 @@ class TUI:
         return Prompt.ask("\n[bold cyan]You[/]")
 
     def reasoning(self, turn_label: str, text: str):
-        """Display reasoning as a single collapsed line, not full text.
+        """Display reasoning as a single compact line with a keyword summary.
 
-        Reasoning models (GLM-5.2) output hundreds of chars of thinking.
-        Showing it all floods the terminal and buries the important stuff.
-        Show just a compact indicator that the agent is thinking.
+        Not the full text (floods terminal), not just 'thinking...'
+        (useless). Show one line: what the agent is thinking ABOUT.
+
+        Example: 'thinking... checking python packages' instead of
+        500 chars of reasoning or just 'thinking...'.
         """
-        # One dim line — not the full reasoning text
-        self.console.print("  [dim]thinking...[/]")
+        # Extract a short summary from the reasoning text:
+        # take the first meaningful sentence/phrase, max 60 chars
+        summary = text.strip().replace("\n", " ")
+        # Remove common prefixes that add no info
+        for prefix in (
+            "Let me ", "Let's ", "I need to ", "I should ",
+            "I'll ", "I will ", "Now ", "First, ", "Next, ",
+            "The user ", "The agent ",
+        ):
+            if summary.startswith(prefix):
+                summary = summary[len(prefix):]
+                break
+        summary = summary[:60]
+        if len(text.strip()) > 60:
+            summary = summary.rstrip() + "..."
+        self.console.print(f"  [dim italic]💭 {summary}[/]")
 
     def event(self, event_type: str, message: str):
         """Display a ReAct event — compact, hierarchical, not noisy."""
@@ -57,7 +73,7 @@ class TUI:
         elif event_type == "llm_thinking":
             pass  # handled by reasoning()
         elif event_type == "llm_error":
-            self.console.print(f"  [red]✗ {message}[/]")
+            pass  # errors handled via tool_result "Error..." or the failed event
         elif event_type == "tool_call":
             # Only show file operations (user cares about files being
             # created/modified). Suppress run_command/read_file/etc —
