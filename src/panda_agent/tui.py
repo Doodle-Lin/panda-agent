@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
 
 
 class TUI:
@@ -35,8 +34,12 @@ class TUI:
         )
 
     def user_input(self) -> str:
-        """Get user input — visually prominent."""
-        return Prompt.ask("\n[bold cyan]You[/]")
+        """Get user input — in a bordered box matching the answer panel."""
+        self.console.print()
+        self.console.print("[cyan]╭─ You ─────────────────────────────────────────────────╮[/]")
+        result = self.console.input("[cyan]│[/] ")
+        self.console.print("[cyan]╰────────────────────────────────────────────────────────╯[/]")
+        return result
 
     def reasoning(self, turn_label: str, text: str):
         """Display reasoning as a single compact line with a keyword summary.
