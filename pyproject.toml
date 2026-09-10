@@ -24,6 +24,8 @@ dependencies = [
     "rich>=13.0",
     "pyyaml>=6.0",
     "libcst>=1.1",
+    "numpy>=1.24",
+    "sentence-transformers>=2.2",
 ]
 
 [project.optional-dependencies]
