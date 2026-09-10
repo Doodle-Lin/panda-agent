@@ -34,9 +34,12 @@ class TUI:
         )
 
     def user_input(self) -> str:
-        """Get user input — visually prominent with a prompt indicator."""
+        """Get user input — in a bordered box matching the answer panel."""
         self.console.print()
-        return self.console.input("[bold cyan]You >[/] ")
+        self.console.print("[cyan]╭─ You ─────────────────────────────────────────────────╮[/]")
+        result = self.console.input("[cyan]│[/] ")
+        self.console.print("[cyan]╰────────────────────────────────────────────────────────╯[/]")
+        return result
 
     def reasoning(self, turn_label: str, text: str):
         """Display reasoning as a single compact line with a keyword summary.
