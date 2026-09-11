@@ -241,3 +241,33 @@ def get_skill_evolution_prompt() -> str:
     """
     return SKILL_GENERATION_PROMPT
 
+
+def delete_skill(name: str) -> bool:
+    """Delete a user skill by name. Returns True if deleted.
+
+    Builtin skills cannot be deleted — only skills in $PANDA_HOME/skills/.
+    """
+    user_dir = _auto_skills_dir()
+    # Try exact filename and stem match
+    for candidate in user_dir.glob("*.md"):
+        skill = load_skill_from_file(candidate, "user")
+        if skill and skill.name == name:
+            candidate.unlink()
+            return True
+    return False
+
+
+def skill_stats() -> dict[str, Any]:
+    """Return statistics about loaded skills."""
+    skills = load_all_skills()
+    builtin = [s for s in skills if s.source == "builtin"]
+    user = [s for s in skills if s.source == "user"]
+    total_triggers = sum(len(s.triggers) for s in skills)
+    return {
+        "total": len(skills),
+        "builtin": len(builtin),
+        "user": len(user),
+        "total_triggers": total_triggers,
+        "skill_names": [s.name for s in skills],
+    }
+
