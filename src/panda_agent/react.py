@@ -388,13 +388,15 @@ def run_react(
 
     # Build system prompt with tool descriptions
     tool_descs = get_tool_descriptions()
-    system = build_system_prompt(tool_descs)
+    skill_enabled = getattr(config.agent, "skill_enabled", True)
+    system = build_system_prompt(tool_descs, skill_enabled=skill_enabled)
 
-    # Inject matched skills into system prompt
-    from .skill_system import skills_to_prompt
-    skill_ctx = skills_to_prompt(task)
-    if skill_ctx:
-        system += skill_ctx
+    # Inject matched skills into system prompt (only if skills enabled)
+    if skill_enabled:
+        from .skill_system import skills_to_prompt
+        skill_ctx = skills_to_prompt(task)
+        if skill_ctx:
+            system += skill_ctx
 
     # Inject memory context if available
     if memory and config.memory.enabled:

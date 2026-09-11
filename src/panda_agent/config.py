@@ -28,6 +28,7 @@ class ModelConfig:
 class AgentConfig:
     max_turns: int = 0  # 0 = unlimited; doom loop detection is the real guard
     max_retries: int = 3
+    skill_enabled: bool = True  # inject skill matching + auto-generation prompt
 
 
 @dataclass

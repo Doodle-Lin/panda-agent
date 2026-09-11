@@ -268,6 +268,12 @@ def main():
     # history
     sub.add_parser("history", help="View evolution history — see how the agent has improved")
 
+    # skills
+    sk = sub.add_parser("skills", help="Manage skills — list, show, delete, match")
+    sk.add_argument("action", choices=["list", "show", "delete", "match", "stats"],
+                    help="Skill action")
+    sk.add_argument("name", nargs="?", default="", help="Skill name (for show/delete) or text (for match)")
+
     args = parser.parse_args()
 
     # Default to chat if no command
@@ -288,6 +294,8 @@ def main():
         cmd_history(args)
     elif args.command == "tools":
         cmd_tools()
+    elif args.command == "skills":
+        cmd_skills(args)
 
 
 def cmd_chat(args):
@@ -703,6 +711,69 @@ def cmd_history(args):
     """Handle history command — view evolution timeline."""
     from .evolution_history import format_history_table
     print(format_history_table())
+
+
+def cmd_skills(args):
+    """Handle skills command — list, show, delete, match."""
+    from .skill_system import load_all_skills, match_skills, delete_skill, skill_stats
+
+    if args.action == "list":
+        skills = load_all_skills()
+        if not skills:
+            print("No skills loaded.")
+            return
+        print(f"{'Name':<20} {'Source':<10} {'Triggers'}")
+        print("-" * 70)
+        for s in skills:
+            triggers = ", ".join(s.triggers[:3])
+            if len(s.triggers) > 3:
+                triggers += f" (+{len(s.triggers)-3})"
+            print(f"{s.name:<20} {s.source:<10} {triggers}")
+
+    elif args.action == "show":
+        if not args.name:
+            print("Usage: panda skills show <name>")
+            return
+        skills = load_all_skills()
+        for s in skills:
+            if s.name == args.name:
+                print(f"Name: {s.name}")
+                print(f"Description: {s.description}")
+                print(f"Source: {s.source}")
+                print(f"Triggers: {', '.join(s.triggers)}")
+                print(f"File: {s.file_path}")
+                print()
+                print(s.content)
+                return
+        print(f"Skill '{args.name}' not found.")
+
+    elif args.action == "delete":
+        if not args.name:
+            print("Usage: panda skills delete <name>")
+            return
+        if delete_skill(args.name):
+            print(f"Skill '{args.name}' deleted.")
+        else:
+            print(f"Skill '{args.name}' not found or is builtin (cannot delete).")
+
+    elif args.action == "match":
+        if not args.name:
+            print("Usage: panda skills match <text>")
+            return
+        matched = match_skills(args.name)
+        if not matched:
+            print("No skills matched.")
+        else:
+            for s in matched:
+                print(f"  {s.name}: {s.description}")
+
+    elif args.action == "stats":
+        stats = skill_stats()
+        print(f"Total skills: {stats['total']}")
+        print(f"  Builtin: {stats['builtin']}")
+        print(f"  User:    {stats['user']}")
+        print(f"  Total triggers: {stats['total_triggers']}")
+        print(f"  Names: {', '.join(stats['skill_names'])}")
 
 
 if __name__ == "__main__":
