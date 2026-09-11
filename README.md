@@ -67,13 +67,15 @@ prompt hurt `recover_from_missing_file`: 100 → 0). See the
 | 3-agent evolution loop | ✅ Working | Executor → Evaluator → Improver |
 | Patch application | ✅ Working | libcst CST rewriting, auto-backup, revert on failure |
 | Evolvable surface | ✅ Working | `tools.py` (hands) + `brain.py` (mind) + `security.py` (rules) |
-| CLI + TUI | ✅ Working | `panda`, `panda chat -q`, `panda evolve -t`, `panda history` |
+| CLI + TUI | ✅ Working | `panda`, `panda chat -q`, `panda evolve -t`, `panda history`, `panda skills` |
+| **Skill system** | ✅ Working | Auto-match `.md` skills to tasks; agent auto-generates and patches skills |
 | **Regression gate** | ✅ Working | Optional gate rejects measured task regressions |
 | **Execution boundaries** | ✅ Working | Command allowlist + workspace containment; quoted-arg metacharacters allowed |
-| Graph memory | ✅ Working | Embedded SQLite graph; persistent and dependency-free |
+| Graph memory | ✅ Working | Embedded SQLite + semantic embedding (bge-base-zh); persistent, no API needed |
 | Daily-use evolution | ✅ Working | Chat mode auto-learns and triggers evolution on recurring failures |
 | **Evolution visibility** | ✅ Working | Startup banner shows evolution count; `panda history` shows timeline |
 | LLM resilience | ✅ Working | Retry on transient failures + per-chunk streaming timeout |
+| Multi-line input | ✅ Working | Paste long content; Esc or Ctrl+D to submit |
 | OS-level sandbox | 🟡 Partial | Allowlist + path containment, but no kernel isolation. See [Security](#security) |
 
 **Current release evaluation: 374 passed, 1 skipped** across parsing, patching,
@@ -131,12 +133,13 @@ model:
   max_tokens: 8192
 
 agent:
-  max_turns: 10
+  max_turns: 0                           # 0 = unlimited (doom loop detection guards)
   max_retries: 3
+  skill_enabled: true                     # inject skill matching + auto-generation
 
 memory:
   enabled: true
-  graph_url: "embedded://"                # default: bundled SQLite graph
+  graph_url: "embedded://"                # default: bundled SQLite + embedding
   storage_path: ""                        # default: $PANDA_HOME/memory/memory.sqlite3
   auto_write: true
 
@@ -312,24 +315,95 @@ Verified across multiple observation runs in `docs/runs/`.
 
 ---
 
+## Skill System
+
+PandaAgent has a runtime skill system inspired by Hermes and Claude CLI.
+Skills are markdown files with YAML frontmatter that extend the agent's
+capabilities **without modifying source code**.
+
+### How skills work
+
+```
+User: "帮我做个视频"
+  ↓
+skill_system matches "做视频" → make_video skill
+  ↓
+skill content injected into system prompt as hard rules
+  ↓
+agent follows skill steps (don't use ffmpeg, write .py file, use edge_tts...)
+  ↓
+task completes → agent auto-generates SKILL.md if 5+ tool calls
+  ↓
+next time: skill is auto-loaded + matched
+```
+
+### Skill file format
+
+```markdown
+---
+name: make_video
+description: Generate a video with PPT slides and voice narration
+triggers:
+  - make a video
+  - 做个视频
+---
+
+# Make Video Skill
+
+When the user asks to make a video:
+1. Check if python-pptx, edge-tts are installed
+2. Write a Python script (do NOT use ffmpeg as a command)
+3. Use edge_tts for voice narration
+...
+```
+
+### Auto-evolution (skill generation + patching)
+
+After completing a complex task (5+ tool calls), the agent is instructed to:
+
+- **Generate** a new SKILL.md summarizing steps, gotchas, and solutions
+- **Patch** existing skills when encountering problems (FIX/VARIANT/ADD)
+- **Skip** silently for simple tasks (greetings, <5 tool calls)
+
+This creates the "越用越聪明" loop: task → learn → generate/patch skill →
+future tasks benefit.
+
+### Skill management
+
+```bash
+panda skills list          # list all loaded skills
+panda skills show <name>   # show full skill content
+panda skills match <text>  # test which skills match
+panda skills delete <name> # delete user skill (builtin protected)
+panda skills stats         # summary statistics
+```
+
+Skills are loaded from:
+- `src/panda_agent/skills/` (built-in: make_video, make_mindmap, make_ppt)
+- `$PANDA_HOME/skills/` (user-defined + auto-generated)
+
+Disable skills in config: `agent.skill_enabled: false`
+
+---
+
 ## Graph Memory
 
-Optional associative memory is bundled as a persistent SQLite graph. It uses a
-portable lexical scorer for CJK and Latin text, automatic graph links, and
-one-hop propagation to retrieve related knowledge. No sidecar service or
-private sibling repository is required.
+Associative memory backed by embedded SQLite + semantic embedding retrieval
+(Sentence Transformer, BAAI/bge-base-zh-v1.5). The agent learns from each
+task — lessons, patch outcomes, and recurring errors are persisted and
+retrieved via semantic similarity. No external service or API needed.
 
 ```yaml
 memory:
   enabled: true
-  graph_url: "embedded://"  # default
+  graph_url: "embedded://"  # default: SQLite + semantic embedding
   storage_path: ""          # $PANDA_HOME/memory/memory.sqlite3 by default
-  auto_write: true      # persist task outcomes automatically
+  auto_write: true          # persist task outcomes automatically
 ```
 
-For compatibility, `MemoryClient` can still use an explicitly configured HTTP
-memory service. The embedded backend is the default and remains optional: set
-`memory.enabled: false` to disable retrieval and writes.
+The embedding model (BAAI/bge-base-zh-v1.5, 768-dim) is auto-downloaded
+on first use. When `sentence-transformers` is not installed, falls back
+to lexical cosine similarity — same interface, lower retrieval quality.
 
 ---
 
