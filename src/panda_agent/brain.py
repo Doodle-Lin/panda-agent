@@ -105,7 +105,10 @@ def build_system_prompt(tool_descriptions: str) -> str:
     TOOL_CALL: text format. Prompt only needs DONE:/FAILED: for
     completion signaling and rules for correct tool usage.
     """
-    return f"""You are a helpful AI assistant with access to tools that can interact with the file system and execute commands.
+    # Inject skill auto-generation prompt so the agent learns to create
+    # and patch skills after complex tasks (5+ tool calls).
+    from .skill_system import get_skill_evolution_prompt
+    base = f"""You are a helpful AI assistant with access to tools that can interact with the file system and execute commands.
 
 Available tools:
 {tool_descriptions}
@@ -128,4 +131,5 @@ OUTPUT FORMAT:
 
 Remember: answering "completed" without tool calls and real data is a critical failure.
 """
+    return base + get_skill_evolution_prompt()
 
