@@ -390,6 +390,12 @@ def run_react(
     tool_descs = get_tool_descriptions()
     system = build_system_prompt(tool_descs)
 
+    # Inject matched skills into system prompt
+    from .skill_system import skills_to_prompt
+    skill_ctx = skills_to_prompt(task)
+    if skill_ctx:
+        system += skill_ctx
+
     # Inject memory context if available
     if memory and config.memory.enabled:
         ctx = memory.retrieve_context(task, top_k=3)
