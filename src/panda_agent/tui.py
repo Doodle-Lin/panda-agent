@@ -34,12 +34,43 @@ class TUI:
         )
 
     def user_input(self) -> str:
-        """Get user input — in a bordered box matching the answer panel."""
+        """Get user input — multiline, in a bordered box matching the answer panel.
+
+        Uses prompt_toolkit for multiline support (paste long content, Shift+Enter
+        or Esc→Enter to submit). Falls back to Rich console.input if unavailable.
+        """
         self.console.print()
         self.console.print("[cyan]╭─ You ─────────────────────────────────────────────────╮[/]")
-        result = self.console.input("[cyan]│[/] ")
+        try:
+            from prompt_toolkit import prompt as pt_prompt
+            from prompt_toolkit.key_binding import KeyBindings
+
+            bindings = KeyBindings()
+            # Enter = newline (multiline), Shift+Enter or Esc→Enter = submit
+            @bindings.add("enter", eager=True)
+            def _newline(event):
+                event.current_buffer.insert_text("\n")
+
+            @bindings.add("escape")
+            def _submit(event):
+                event.current_buffer.validate_and_handle()
+
+            # Ctrl+D also submits (like hermes/claude cli)
+            @bindings.add("c-d")
+            def _ctrl_d(event):
+                event.current_buffer.validate_and_handle()
+
+            result = pt_prompt(
+                "[cyan]│[/] ",
+                multiline=True,
+                key_bindings=bindings,
+                prompt_continuation="[cyan]│[/] ",
+            )
+        except ImportError:
+            result = self.console.input("[cyan]│[/] ")
+
         self.console.print("[cyan]╰────────────────────────────────────────────────────────╯[/]")
-        return result
+        return result.strip()
 
     def reasoning(self, turn_label: str, text: str):
         """Display reasoning as a single compact line with a keyword summary.

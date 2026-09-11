@@ -26,6 +26,7 @@ dependencies = [
     "libcst>=1.1",
     "numpy>=1.24",
     "sentence-transformers>=2.2",
+    "prompt_toolkit>=3.0",
 ]
 
 [project.optional-dependencies]
