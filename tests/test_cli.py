@@ -7,10 +7,8 @@ the safety gates the rest of the system enforces.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import yaml
 
@@ -58,7 +56,7 @@ def test_cli_wires_benchmark_gate_when_suite_configured(tmp_path, monkeypatch):
         "benchmark_suite": str(suite_path),
         "benchmark_tolerance": 5.0,
     }
-    cfg_path = _write_config(tmp_path, evolution_cfg)
+    _write_config(tmp_path, evolution_cfg)
     monkeypatch.setenv("PANDA_HOME", str(tmp_path))
 
     # 3. Patch the heavy components so we can inspect the Improver the CLI
@@ -97,7 +95,8 @@ def test_cli_wires_benchmark_gate_when_suite_configured(tmp_path, monkeypatch):
         def __init__(self, *a, **kw):
             pass
 
-        execute = lambda self, task: None
+        def execute(self, task):
+            return None
 
     def fake_record(*a, **kw):
         return True
