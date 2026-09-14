@@ -34,47 +34,30 @@ Audit conducted 2026-09-14 against branch `claude/optimization-audit-fixes` off 
 
 ### Phase 1 — High-priority correctness (sequential, one hotspot at a time)
 
-- [ ] Task 1.1: CLI path wires the regression gate (audit #1)
-  - File: `src/panda_agent/cli.py:321`, `src/panda_agent/config.py`
-  - Issue: `Improver(config)` constructed without `benchmark_gate`/`baseline`; interactive `panda evolve` skips Gate 2
-  - Plan:
-    - Read `benchmarks/tasks.yaml` presence at CLI startup; if present, build `BenchmarkSuite` and pass gate+baseline to `Improver`
-    - Add config field `evolution.benchmark_suite: ""` (path to tasks.yaml; empty = off)
-    - Add tolerance config `evolution.benchmark_tolerance: 5.0`
-  - RED: `tests/test_cli.py::test_cli_wires_benchmark_gate_when_suite_configured` — CLI constructs Improver with gate when suite path set
-  - GREEN: implement
-  - COMMIT: `fix(cli): wire regression benchmark gate into Improver when suite configured`
+- [x] Task 1.1: CLI path wires the regression gate (audit #1)
+  - DONE: commit e5a5975 — `fix(cli): wire regression benchmark gate into Improver when suite configured`
+  - Added `evolution.benchmark_suite` + `evolution.benchmark_tolerance` to config
+  - `_wire_regression_gate()` in cli.py loads suite, builds baseline, attaches gate callback
+  - Wired in both `cmd_chat` (Improver construction) and `cmd_evolve` (pre-built improver passed to run_evolution)
+  - RED→GREEN: tests/test_cli.py::test_cli_wires_benchmark_gate_when_suite_configured
 
-- [ ] Task 1.2: worktree verification fails closed (audit #2)
-  - File: `src/panda_agent/orchestrator.py:843-876`
-  - Issue: `_verify_in_worktree` returns `(True, "worktree creation failed, skipping isolation")` on failure — fail-open
-  - Plan:
-    - When `use_worktree=True` and creation fails: return `(False, "worktree unavailable: <reason>")` and let caller revert
-    - When `use_worktree=False`: keep current pass-through (opt-in is explicit)
-  - RED: `tests/test_evolution_audit.py::test_worktree_creation_failure_reverts_patch`
-  - GREEN: implement
-  - COMMIT: `fix(improver): fail closed when worktree isolation requested but unavailable`
+- [x] Task 1.2: worktree verification fails closed (audit #2)
+  - DONE: commit 31ae73c — `fix(improver): fail closed when worktree isolation requested but unavailable`
+  - `_verify_in_worktree` now returns (False, reason) on creation failure when use_worktree=True
+  - RED→GREEN: tests/test_audit_phase1.py::TestAuditPhase1FailClosed
 
-- [ ] Task 1.3: patch-then-test wrapped in try/finally (audit #3)
-  - File: `src/panda_agent/orchestrator.py:996-1071`
-  - Issue: `source_path.write_text` before pytest; KeyboardInterrupt or crash leaves patched file on disk
-  - Plan:
-    - Wrap the write→test→accept/revert block in try/except/finally
-    - On any exception (incl. KeyboardInterrupt), restore from `backup_path` if exists
-    - Guard `shutil.copy2(backup_path, source_path)` with `backup_path.exists()` check
-  - RED: `tests/test_evolution_audit.py::test_interrupted_patch_restored` (simulate via monkeypatching pytest subprocess to raise)
-  - GREEN: implement
-  - COMMIT: `fix(improver): guarantee patch revert on test-run interruption`
+- [x] Task 1.3: patch-then-test wrapped in try/finally (audit #3)
+  - DONE: commit 806bd71 — `fix(improver): guarantee patch revert on test-run interruption + gate security.py evolution`
+  - try/except BaseException around write→worktree→pytest→benchmark block; restores from backup before re-raising
+  - RED→GREEN: tests/test_audit_phase1.py::TestAuditPhase1InterruptSafety
 
-- [ ] Task 1.4: security.py improvement gated by config (audit #4)
-  - File: `src/panda_agent/orchestrator.py:899`, `src/panda_agent/config.py`
-  - Issue: security.py patched unconditionally; no `improve_security` toggle
-  - Plan:
-    - Add `evolution.improve_security: false` to config (default OFF — security surface is sensitive)
-    - Only attempt security patch when flag is True
-  - RED: `tests/test_evolution_audit.py::test_security_not_patched_when_disabled`
-  - GREEN: implement
-  - COMMIT: `feat(config): gate security.py evolution behind improve_security flag`
+- [x] Task 1.4: security.py improvement gated by config (audit #4)
+  - DONE: commit 806bd71 (bundled with 1.3)
+  - `evolution.improve_security` (default False) gates security.py patching in `improve()`
+  - RED→GREEN: tests/test_audit_phase1.py::TestAuditPhase1SecurityGate (both disabled and enabled paths)
+
+- [x] Task 1.5: ruff lint cleanup
+  - DONE: commit c7c2e25 — `test(audit-phase1): clean up ruff lint in audit + CLI wiring tests`
 
 **Checkpoint 1**: `pytest tests/test_evolution_audit.py tests/test_cli.py -q` green.
 
