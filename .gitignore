@@ -43,6 +43,9 @@ note.txt
 test.txt
 _check.py
 _*.py
+~/
+gradient.png
+.zcode/
 
 # Panda home directory (local dev)
 .panda/
