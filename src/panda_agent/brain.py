@@ -3,8 +3,13 @@
 This file contains the system prompt and decision logic.
 The Improver can patch this file to evolve the agent's brain.
 
-To evolve: improve the SYSTEM_PROMPT, add decision rules, or adjust
+To evolve: improve build_system_prompt, add decision rules, or adjust
 strategy parameters. Keep the function signatures stable.
+
+Note: SYSTEM_PROMPT below is the legacy text-format prompt. The actual
+prompt used at runtime is build_system_prompt() which is designed for
+native function calling. SYSTEM_PROMPT is kept for backward compatibility
+and test coverage but is NOT used by react.py.
 """
 
 from __future__ import annotations

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
+import requests  # only used by deprecated HTTP backend; embedded is default
 
 
 _EMBEDDED_SCHEMES = ("embedded://", "sqlite://")
