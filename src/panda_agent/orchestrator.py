@@ -1198,6 +1198,23 @@ def run_evolution(
                 if improvement.patched:
                     total_patches += 1
                 _emit("improver_done", f"Patched: {improvement.patched}, Attempts: {improvement.attempts}", round_num)
+                # Audit #13a: persist every round's outcome so the scripted
+                # run_evolution path is not silent. The CLI chat path
+                # already records; the experiment path was not.
+                try:
+                    from .evolution_history import record_evolution
+                    record_evolution(
+                        source_file="tools.py/brain.py/security.py",
+                        root_cause=evaluation.root_cause,
+                        suggested_changes=evaluation.suggested_changes,
+                        patched=improvement.patched,
+                        explanation=improvement.explanation or "",
+                        test_output=improvement.test_output or "",
+                        attempts=improvement.attempts,
+                        score=evaluation.score,
+                    )
+                except Exception:
+                    pass  # record_evolution logs its own failures
             except Exception as e:
                 round_result.improvement = ImprovementResult(explanation=f"Error: {e}")
                 _emit("improver_error", str(e), round_num)

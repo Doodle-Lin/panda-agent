@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -29,11 +30,14 @@ def record_evolution(
     test_output: str = "",
     attempts: int = 0,
     score: float = 0.0,
-) -> None:
+) -> bool:
     """Append one evolution event to the history file.
 
     Called by the Improver after every patch attempt (accepted or rejected).
-    Never raises — history recording must not break the evolution loop.
+    Returns True on success, False on failure. Failures are logged to stderr
+    (audit #13b) — history recording must not break the evolution loop, but
+    a silent failure means a disk-full or permission error vanishes without
+    a trace.
     """
     try:
         path = _history_path()
@@ -51,22 +55,52 @@ def record_evolution(
         }
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+        return True
+    except Exception as e:
+        # Audit #13b: surface the failure. The loop continues, but the
+        # operator can see why history was not persisted.
+        print(
+            f"[history] record_evolution failed: {e}",
+            file=sys.stderr,
+        )
+        return False
 
 
-def load_history() -> list[dict]:
-    """Load the full evolution history, oldest first."""
+def load_history(
+    *,
+    limit: int | None = None,
+    source_file: str | None = None,
+) -> list[dict]:
+    """Load evolution history, oldest first.
+
+    Audit #14: stream line-by-line rather than loading the whole file into
+    memory. ``limit`` returns the *last* N entries (most recent) in
+    oldest-first order within that window. ``source_file`` filters to
+    entries whose ``source_file`` matches (e.g. ``"tools.py"``).
+    """
     path = _history_path()
     if not path.exists():
         return []
-    entries = []
+
+    entries: list[dict] = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
-    except Exception:
-        pass
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if source_file is not None and entry.get("source_file") != source_file:
+                    continue
+                entries.append(entry)
+    except Exception as e:
+        print(f"[history] load_history failed: {e}", file=sys.stderr)
+        return []
+
+    if limit is not None and limit >= 0 and len(entries) > limit:
+        entries = entries[-limit:]
     return entries
 
 
