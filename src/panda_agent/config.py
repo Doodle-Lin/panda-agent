@@ -45,6 +45,14 @@ class EvolutionConfig:
     max_rounds: int = 3
     improve_brain: bool = True
     improve_tools: bool = True
+    # Audit US-A4: security.py is a sensitive surface — opt-in by default.
+    improve_security: bool = False
+    # Audit US-A1: regression gate config. ``benchmark_suite`` is a path to
+    # a tasks.yaml; empty string means the gate is off (the historical
+    # default). ``benchmark_tolerance`` is the max weighted-score drop the
+    # gate tolerates before reverting a patch.
+    benchmark_suite: str = ""
+    benchmark_tolerance: float = 5.0
 
 
 @dataclass
@@ -146,6 +154,9 @@ def save_config(cfg: Config) -> None:
             "max_rounds": cfg.evolution.max_rounds,
             "improve_brain": cfg.evolution.improve_brain,
             "improve_tools": cfg.evolution.improve_tools,
+            "improve_security": cfg.evolution.improve_security,
+            "benchmark_suite": cfg.evolution.benchmark_suite,
+            "benchmark_tolerance": cfg.evolution.benchmark_tolerance,
         },
         "display": {
             "tui": cfg.display.tui,
@@ -184,6 +195,9 @@ evolution:
   max_rounds: 3
   improve_brain: true
   improve_tools: true
+  improve_security: false  # security.py evolution is opt-in (sensitive surface)
+  benchmark_suite: ""  # path to a tasks.yaml; empty = Gate 2 off
+  benchmark_tolerance: 5.0
 
 display:
   tui: true

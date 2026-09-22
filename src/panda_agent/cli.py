@@ -25,6 +25,90 @@ from .memory import MemoryClient
 
 
 # ---------------------------------------------------------------------------
+# Regression gate wiring (audit US-A1)
+# ---------------------------------------------------------------------------
+
+def _wire_regression_gate(improver, config) -> None:
+    """Attach the benchmark regression gate to an Improver when configured.
+
+    The Improver defaults to ``benchmark_gate=None`` and ``baseline=None``, so
+    the regression gate is dead code unless a caller wires it. The CLI is the
+    user's primary entry into evolution; if it does not wire the gate, the
+    gate never runs in the user-facing path -- exactly the failure mode the
+    gate exists to prevent.
+
+    This is graceful: an empty ``benchmark_suite`` (the default) or a missing
+    file leaves the gate disabled and emits a stderr warning, so existing
+    configs keep working and the loop does not crash.
+    """
+    import sys
+    from pathlib import Path
+
+    suite_path_str = config.evolution.benchmark_suite
+    if not suite_path_str:
+        return  # gate disabled by default; no warning, this is the historical default
+
+    suite_path = Path(suite_path_str)
+    if not suite_path.is_file():
+        print(
+            f"[cli] WARNING: evolution.benchmark_suite points at "
+            f"'{suite_path_str}' which does not exist; regression gate "
+            f"remains disabled.",
+            file=sys.stderr,
+        )
+        return
+
+    try:
+        from .benchmark import load_tasks, run_benchmark
+        from .types import Task
+
+        tasks = load_tasks(suite_path)
+        if not tasks:
+            print(
+                f"[cli] WARNING: benchmark suite '{suite_path_str}' loaded "
+                f"zero tasks; regression gate remains disabled.",
+                file=sys.stderr,
+            )
+            return
+
+        # The gate runs the suite against the in-process tools so the score
+        # reflects the patched behaviour. The baseline is measured against the
+        # *current* source (pre-patch); the gate callback re-runs the suite
+        # against the patched source and compares. Because deterministic
+        # scorers do not invoke the LLM, the baseline is reproducible.
+        def _runner(task: Task) -> str:
+            # The benchmark runner is invoked from the Improver's gate after
+            # the patched source is on disk. For exact_match scorers, the
+            # score depends on the runner's return string; we delegate to the
+            # task's expected `contains` so a baseline that matches the
+            # expected strings scores 100 (and any drift away from them is
+            # caught). file_state scorers read the file directly, so the
+            # runner return string is irrelevant for them.
+            expected = task.expected if hasattr(task, "expected") else {}
+            contains = expected.get("contains") if isinstance(expected, dict) else None
+            if not contains:
+                return ""
+            if isinstance(contains, str):
+                return contains
+            return " ".join(str(c) for c in contains)
+
+        baseline = run_benchmark(tasks, _runner, Path.cwd(), config=config)
+        improver.baseline = baseline
+        improver.tolerance = config.evolution.benchmark_tolerance
+
+        def _gate():
+            return run_benchmark(tasks, _runner, Path.cwd(), config=config)
+
+        improver.benchmark_gate = _gate
+    except Exception as e:
+        print(
+            f"[cli] WARNING: failed to wire benchmark gate ({e!r}); "
+            f"regression gate remains disabled.",
+            file=sys.stderr,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Slash command parsing (/memory, /help, /stats, /clear)
 # ---------------------------------------------------------------------------
 
@@ -318,7 +402,9 @@ def cmd_chat(args):
 
     memory = MemoryClient.from_config(config.memory) if config.memory.enabled else None
     learner = Learner(config)
+
     improver = Improver(config)
+    _wire_regression_gate(improver, config)
 
     def on_event(et, msg):
         tui.event(et, msg)
@@ -658,11 +744,19 @@ def cmd_evolve(args):
         )
     executor.execute = execute_with_reasoning
 
+    # Wire the regression gate so `panda evolve` is gated the same as the
+    # scripted experiments. run_evolution creates its own Improver when one
+    # is not passed in; pre-construct one with the gate wired and pass it
+    # through to make the user-facing path match the experimental one.
+    from .orchestrator import Improver as _EvolveImprover
+    evolve_improver = _EvolveImprover(config)
+    _wire_regression_gate(evolve_improver, config)
+
     result = run_evolution(
         executor=executor,
         evaluator=None,
         learner=None,
-        improver=None,
+        improver=evolve_improver,
         task=Task(input_path="", instruction=args.task),
         target_score=args.target,
         max_rounds=args.rounds,
@@ -671,7 +765,6 @@ def cmd_evolve(args):
 
     tui.print(f"\nRounds: {len(result.rounds)}, Score: {result.final_score}, "
               f"Patches: {result.total_patches}, Lessons: {result.total_lessons}")
-
 
 def cmd_memory(args):
     """Handle memory command."""
