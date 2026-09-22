@@ -27,9 +27,12 @@ This creates the "越用越聪明" closed loop:
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 
 @dataclass
@@ -43,10 +46,19 @@ class Skill:
     file_path: Path | None = None
 
     def matches(self, user_input: str) -> bool:
-        """Return True if user_input matches any trigger (case-insensitive)."""
+        """Return True if user_input contains any trigger (case-insensitive).
+
+        Audit #11a: the pre-fix used `trigger in text or text in trigger`
+        (bidirectional substring), so a 3-char trigger matched almost
+        anything via the reverse direction. Drop the reverse match — the
+        trigger is a pattern, the input is the text to search.
+        """
         text = user_input.lower().strip()
+        if not text:
+            return False
         for trigger in self.triggers:
-            if trigger.lower() in text or text in trigger.lower():
+            t = trigger.lower().strip()
+            if t and t in text:
                 return True
         return False
 
@@ -60,48 +72,63 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
     Returns (metadata_dict, body_text). If no frontmatter, returns
     ({}, full_text).
+
+    Audit #11b: the hand-rolled parser broke on CRLF line endings, did not
+    unquote quoted YAML values, and silently returned None on parse errors.
+    Use yaml.safe_load (PyYAML is already a dependency) and split the body
+    on the closing delimiter robustly. Parse failures are surfaced to the
+    caller via a raised ValueError; load_skill_from_file logs and returns
+    None so a bad file does not abort load_all_skills.
     """
     if not text.startswith("---"):
         return {}, text
 
-    # Find the closing ---
-    end = text.find("\n---", 3)
-    if end == -1:
+    # Find the closing --- on its own line. Split on the first line boundary
+    # after the opening delimiter so CRLF and LF are both handled.
+    # The opening delimiter is at offset 0..3 ("---\n" or "---\r\n").
+    rest = text[3:]
+    # Normalise leading newline so the frontmatter body starts at line 1.
+    if rest.startswith("\r\n"):
+        rest = rest[2:]
+    elif rest.startswith("\n"):
+        rest = rest[1:]
+    # Find the closing delimiter: a line that is exactly "---" (with
+    # optional trailing whitespace).
+    close_idx = -1
+    for line in rest.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n").strip()
+        if stripped == "---":
+            close_idx = rest.find(line)
+            break
+    if close_idx == -1:
+        # No closing delimiter — treat the whole text as body, no metadata.
         return {}, text
 
-    front = text[3:end].strip()
-    body = text[end + 4:].strip()
+    front = rest[:close_idx]
+    # Body starts after the closing delimiter line.
+    body_start = close_idx + len(rest[close_idx:].splitlines(keepends=True)[0])
+    body = rest[body_start:].lstrip("\r\n")
 
-    # Simple YAML parsing (avoid adding pyyaml as skill-system dep)
-    metadata: dict[str, Any] = {}
-    current_key: str | None = None
-    for line in front.splitlines():
-        line = line.rstrip()
-        if not line:
-            continue
-        # Check if this is a list item under a key
-        if line.startswith("  - ") and current_key:
-            val = line[4:].strip()
-            if isinstance(metadata.get(current_key), list):
-                metadata[current_key].append(val)
-            else:
-                metadata[current_key] = [val]
-        elif ":" in line:
-            key, _, val = line.partition(":")
-            key = key.strip()
-            val = val.strip()
-            if val:
-                metadata[key] = val
-            else:
-                # Key with no value — might be a list
-                metadata[key] = []
-                current_key = key
+    # Use yaml.safe_load for robust parsing. This handles quoted values,
+    # nested lists, comments, and CRLF transparently.
+    try:
+        metadata = yaml.safe_load(front) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"invalid YAML frontmatter: {e}") from e
 
+    if not isinstance(metadata, dict):
+        raise ValueError(
+            f"frontmatter is not a mapping (got {type(metadata).__name__})"
+        )
     return metadata, body
 
 
 def load_skill_from_file(path: Path, source: str = "builtin") -> Skill | None:
-    """Load a single skill from a .md file."""
+    """Load a single skill from a .md file.
+
+    Audit #11b: parse failures now log to stderr (with the file path) so a
+    malformed skill file is visible rather than silently dropped.
+    """
     try:
         text = path.read_text(encoding="utf-8")
         metadata, body = _parse_frontmatter(text)
@@ -112,7 +139,7 @@ def load_skill_from_file(path: Path, source: str = "builtin") -> Skill | None:
         if isinstance(triggers_raw, str):
             triggers = [triggers_raw]
         elif isinstance(triggers_raw, list):
-            triggers = triggers_raw
+            triggers = [str(t) for t in triggers_raw]
         else:
             triggers = []
 
@@ -124,7 +151,12 @@ def load_skill_from_file(path: Path, source: str = "builtin") -> Skill | None:
             source=source,
             file_path=path,
         )
-    except Exception:
+    except Exception as e:
+        # Surface the failure: a bad skill file should not vanish silently.
+        print(
+            f"[skill] failed to load {path}: {e}",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -255,6 +287,43 @@ def delete_skill(name: str) -> bool:
             candidate.unlink()
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Audit #12: post-task auto-generation detection
+# ---------------------------------------------------------------------------
+
+def snapshot_skill_files() -> list[Path]:
+    """Return the current set of user-skill file paths in $PANDA_HOME/skills/.
+
+    Call this *before* a task starts; pass the result to
+    :func:`detect_new_skills_after_task` to see which skills the agent
+    generated during the task.
+    """
+    user_dir = _auto_skills_dir()
+    if not user_dir.is_dir():
+        return []
+    return sorted(user_dir.glob("*.md"))
+
+
+def detect_new_skills_after_task(before: list[Path]) -> list[Skill]:
+    """Return skills added to $PANDA_HOME/skills/ since ``before``.
+
+    The brain prompt instructs the LLM to write a SKILL.md after a 5+ tool
+    call task, but the loop has no way to confirm that actually happened.
+    This helper compares the file listing before and after; new files are
+    loaded and returned so the caller can report ``skill_auto_generated``
+    on the task result.
+    """
+    after = snapshot_skill_files()
+    before_set = {p.resolve() for p in before}
+    new_files = [p for p in after if p.resolve() not in before_set]
+    new_skills: list[Skill] = []
+    for path in new_files:
+        skill = load_skill_from_file(path, "user")
+        if skill is not None:
+            new_skills.append(skill)
+    return new_skills
 
 
 def skill_stats() -> dict[str, Any]:
