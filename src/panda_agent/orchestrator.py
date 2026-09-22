@@ -843,8 +843,11 @@ class Improver:
     def _verify_in_worktree(self, patched_source: str, source_path: Path) -> tuple[bool, str]:
         """Verify a patch in an isolated git worktree at HEAD.
 
-        Returns (passed, output). If worktree creation fails (non-git repo),
-        returns (True, 'worktree skipped') to fail open rather than block evolution.
+        Returns (passed, output). Fails CLOSED when use_worktree=True and
+        the worktree cannot be created: the caller reverts the patch. The
+        prior behaviour returned (True, "skipping isolation") which let a
+        misconfigured git or missing worktree binary silently disable the
+        isolation the caller explicitly asked for.
         """
         import tempfile
         try:
@@ -854,8 +857,9 @@ class Improver:
                     cwd=str(self.project_root), capture_output=True, text=True, timeout=30,
                 )
                 if result.returncode != 0:
-                    # Not a git repo or worktree failed — fail open
-                    return True, "worktree creation failed, skipping isolation"
+                    # Fail closed: the caller asked for isolation and we
+                    # cannot provide it. Revert rather than silently accept.
+                    return False, f"worktree creation failed: {result.stderr.strip() or result.stdout.strip()}"
                 try:
                     # Copy only the patched source file into the worktree
                     rel = source_path.relative_to(self.project_root)
@@ -873,7 +877,10 @@ class Improver:
                         cwd=str(self.project_root), capture_output=True, timeout=30,
                     )
         except Exception as e:
-            return True, f"worktree error: {e}"
+            # Any unexpected error also fails closed when isolation was
+            # explicitly requested. The caller must not silently accept a
+            # patch whose verification could not be performed as configured.
+            return False, f"worktree error: {e}"
 
     def improve(self, evaluation: Evaluation) -> ImprovementResult:
         """Generate and apply patches based on evaluation."""
