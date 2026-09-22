@@ -901,9 +901,13 @@ class Improver:
         if self.config.evolution.improve_brain:
             r = self._improve_file(_BRAIN_PATH, evaluation, ["prompt", "strategy", "decision", "retry", "turn"])
             results.append(("brain", r))
-        # Then try improving security.py
-        r = self._improve_file(_SECURITY_PATH, evaluation, ["command", "allow", "security", "path", "parse"])
-        results.append(("security", r))
+        # Then try improving security.py — gated by improve_security
+        # (audit #4). The security surface is sensitive; the gate defaults
+        # to off so a careless evolution run cannot rewrite the security
+        # boundary without an explicit opt-in.
+        if self.config.evolution.improve_security:
+            r = self._improve_file(_SECURITY_PATH, evaluation, ["command", "allow", "security", "path", "parse"])
+            results.append(("security", r))
 
         # Return the first successful patch
         for name, r in results:
@@ -1006,41 +1010,50 @@ class Improver:
             # Worktree verification (opt-in): run the ORIGINAL tests from HEAD
             # in an isolated git worktree so a patch that weakens tests cannot
             # pass the gate. Only enabled when self.use_worktree is True.
-            if self.use_worktree:
-                wt_passed, wt_output = self._verify_in_worktree(patch_result.source, source_path)
-                if not wt_passed:
+            try:
+                if self.use_worktree:
+                    wt_passed, wt_output = self._verify_in_worktree(patch_result.source, source_path)
+                    if not wt_passed:
+                        shutil.copy2(backup_path, source_path)
+                        source = source_path.read_text(encoding="utf-8")
+                        last_test_output = f"Worktree verification failed: {wt_output}"
+                        continue
+
+                # Run tests
+                passed, test_output = _run_pytest(self.test_path, self.project_root)
+
+                if not passed:
                     shutil.copy2(backup_path, source_path)
                     source = source_path.read_text(encoding="utf-8")
-                    last_test_output = f"Worktree verification failed: {wt_output}"
+                    last_test_output = test_output
                     continue
 
-            # Run tests
-            passed, test_output = _run_pytest(self.test_path, self.project_root)
+                # Second gate: unit tests passing only means the code is not
+                # broken. Confirm the agent's measured behaviour did not degrade
+                # before keeping the patch.
+                gate_note = ""
+                if self.benchmark_gate is not None and self.baseline is not None:
+                    from .benchmark import check_no_regression
 
-            if not passed:
-                shutil.copy2(backup_path, source_path)
-                source = source_path.read_text(encoding="utf-8")
-                last_test_output = test_output
-                continue
-
-            # Second gate: unit tests passing only means the code is not
-            # broken. Confirm the agent's measured behaviour did not degrade
-            # before keeping the patch.
-            gate_note = ""
-            if self.benchmark_gate is not None and self.baseline is not None:
-                from .benchmark import check_no_regression
-
-                after = self.benchmark_gate()
-                gate = check_no_regression(self.baseline, after, self.tolerance)
-                if not gate.accepted:
-                    self.last_reject_reason = gate.reason
+                    after = self.benchmark_gate()
+                    gate = check_no_regression(self.baseline, after, self.tolerance)
+                    if not gate.accepted:
+                        self.last_reject_reason = gate.reason
+                        shutil.copy2(backup_path, source_path)
+                        source = source_path.read_text(encoding="utf-8")
+                        last_test_output = (
+                            f"Unit tests passed but benchmark regressed: {gate.reason}"
+                        )
+                        continue
+                    gate_note = f" | benchmark {gate.delta:+.1f}"
+            except BaseException:
+                # Audit #3: an interrupt (KeyboardInterrupt) or any other
+                # exception between write_text and the revert branches left
+                # the patched file on disk. Restore from backup before
+                # re-raising so the working tree is never left dirty.
+                if backup_path.exists():
                     shutil.copy2(backup_path, source_path)
-                    source = source_path.read_text(encoding="utf-8")
-                    last_test_output = (
-                        f"Unit tests passed but benchmark regressed: {gate.reason}"
-                    )
-                    continue
-                gate_note = f" | benchmark {gate.delta:+.1f}"
+                raise
 
             backup_path.unlink(missing_ok=True)
 
@@ -1075,7 +1088,6 @@ class Improver:
         if backup_path.exists():
             shutil.copy2(backup_path, source_path)
             backup_path.unlink(missing_ok=True)
-
         if self.memory and hasattr(self.memory, 'write'):
             try:
                 self.memory.write(
