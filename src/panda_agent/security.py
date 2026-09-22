@@ -57,7 +57,26 @@ DEFAULT_ALLOWED_COMMANDS: frozenset[str] = frozenset({
 #: Shell metacharacters that indicate an attempt to chain, pipe, redirect or
 #: substitute. Their presence means the caller expected a shell, and running
 #: the string through one is exactly what this module prevents.
-_SHELL_METACHARACTERS = frozenset(";|&<>`$(){}[]!*?\n\r")
+#:
+#: Narrowed (audit #7): the previous set included ``*``, ``?``, ``!`` -- glob
+#: and regex characters, not shell operators. Under ``shell=False`` they are
+#: literal text with no shell to interpret them, so rejecting them broke
+#: legitimate uses like ``grep "TODO.*FIXME"`` or ``find . -name "*.py"``
+#: when the agent emitted them unquoted. The narrowed set is only the
+#: characters that introduce shell-level composition.
+_SHELL_METACHARACTERS = frozenset(";|&<>`$(){}[]\n\r")
+
+
+#: Subcommands of ``pip``/``uv`` that execute arbitrary code via build hooks
+#: or ``setup.py``. These are blocked by default; the operator must opt in
+#: with ``PANDA_ALLOW_INSTALL=1`` to enable them. Read-only pip/uv operations
+#: (``list``, ``show``, ``--version``) remain allowed.
+_INSTALL_SUBCOMMANDS = frozenset({"install", "download"})
+
+
+def _allow_install() -> bool:
+    """True when the operator has explicitly permitted pip/uv install."""
+    return os.environ.get("PANDA_ALLOW_INSTALL", "").strip().lower() in {"1", "true", "yes"}
 
 
 def unsafe_mode() -> bool:
@@ -134,6 +153,27 @@ def parse_command(command: str) -> list[str]:
             f"Permitted: {', '.join(sorted(permitted))}. "
             "Extend with PANDA_ALLOWED_COMMANDS if this is intended."
         )
+
+    # Audit #6: ``pip install <pkg>`` / ``uv ... install`` is arbitrary code
+    # execution (build hooks, setup.py). Block by default; require
+    # ``PANDA_ALLOW_INSTALL=1`` to opt in. Read-only pip/uv subcommands
+    # (list, show, --version) remain allowed.
+    if program in {"pip", "uv"} and not _allow_install():
+        subcommand = argv[1] if len(argv) > 1 else ""
+        if subcommand in _INSTALL_SUBCOMMANDS:
+            raise SecurityError(
+                f"command '{program} {subcommand}' is blocked by default: it "
+                "executes arbitrary code via build hooks. Set "
+                "PANDA_ALLOW_INSTALL=1 to opt in deliberately."
+            )
+        # uv uses `uv pip install` (two tokens before the subcommand)
+        if program == "uv" and subcommand == "pip" and len(argv) > 2:
+            if argv[2] in _INSTALL_SUBCOMMANDS:
+                raise SecurityError(
+                    f"command 'uv pip {argv[2]}' is blocked by default: it "
+                    "executes arbitrary code via build hooks. Set "
+                    "PANDA_ALLOW_INSTALL=1 to opt in deliberately."
+                )
 
     return argv
 
