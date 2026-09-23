@@ -146,6 +146,9 @@ memory:
 evolution:
   improve_tools: true
   improve_brain: true
+  improve_security: false                  # security.py evolution is opt-in
+  benchmark_suite: ""                      # path to tasks.yaml; empty = Gate 2 off
+  benchmark_tolerance: 5.0                 # max weighted-score drop tolerated
 ```
 
 ```bash
@@ -443,6 +446,7 @@ command that dumps its environment is not a credential disclosure.
 | `PANDA_WORKSPACE` | Directory file tools are confined to (default: cwd) |
 | `PANDA_ALLOWED_COMMANDS` | Extra commands to permit, space/comma separated |
 | `PANDA_UNSAFE=1` | Disable path containment checks — for isolated environments only |
+| `PANDA_ALLOW_INSTALL=1` | Allow `pip install` / `uv pip install` (blocked by default; runs arbitrary code via build hooks) |
 
 ### What is not
 
@@ -508,12 +512,23 @@ and doesn't start with "Continue", it's treated as a final answer
 the `DONE:` prefix, but a model thinking out loud gets misread as finished.
 Structured output would remove the guesswork.
 
-### 🟡 Embedded memory is lexical, not vector semantic search
+### 🟢 Embedded memory supports semantic retrieval when `sentence_transformers` is installed
 
-The bundled backend favors portability and zero extra dependencies. Its scoring
-works for CJK and Latin text but is not a replacement for a workload-tuned
-embedding retriever. Configure an HTTP backend only when its operational cost
-and privacy properties are acceptable.
+The bundled backend uses lexical cosine similarity by default (zero extra
+dependencies, works for CJK and Latin text). When the optional
+`sentence_transformers` package is installed, the backend switches to
+semantic embedding retrieval (BAAI/bge-base-zh-v1.5, 768-dim, auto-downloaded
+on first use). The interface is the same either way — the retrieval quality
+improves with the embedding path, the lexical path keeps the dependency
+footprint at zero. To enable embeddings:
+
+```bash
+pip install sentence-transformers
+```
+
+A workload-tuned embedding retriever still outperforms the bundled model;
+configure an HTTP backend only when its operational cost and privacy
+properties are acceptable.
 
 ---
 
@@ -556,11 +571,14 @@ The allowlist bounds which programs run; it cannot bound what `python3` does
 once running. Container or `seccomp`/`nsjail` execution for the command tool and
 the test runner.
 
-### R4 — Add an optional semantic retrieval backend 🟡
+### R4 — Semantic retrieval backend 🟢
 
-Keep the embedded SQLite backend as the portable default, then offer an
-opt-in semantic backend only with reproducible evaluation and a clear data
-handling story.
+The embedded SQLite backend already switches to semantic embedding
+retrieval (BAAI/bge-base-zh-v1.5) when `sentence_transformers` is installed;
+the lexical cosine path is the zero-dependency fallback. Remaining work:
+reproducible evaluation comparing the bundled embedding retriever against
+a workload-tuned alternative, and a clear data-handling story for an
+opt-in HTTP backend when local embedding is not enough.
 
 ### R5 — Observability 🟢
 

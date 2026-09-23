@@ -578,10 +578,17 @@ class TestWorktreeVerification:
         improver = Improver.__new__(Improver)
         improver.project_root = tmp_path
         improver.test_path = tmp_path / "tests"
+        improver.use_worktree = True
+        improver._worktree_warning_emitted = False
         assert hasattr(improver, '_verify_in_worktree')
-        # In a non-git directory, should fail open
+        # In a non-git directory, worktree creation fails and the verifier
+        # fails CLOSED (audit #2): use_worktree=True was explicitly requested,
+        # so we reject the patch rather than silently accept without
+        # isolation. A non-git dir is not a "fail open" case here — it is a
+        # "you asked for isolation and we can't provide it" case.
         passed, msg = improver._verify_in_worktree("x = 1\n", tmp_path / "src" / "test.py")
-        assert passed is True  # fail open for non-git
+        assert passed is False  # fail closed when isolation requested but unavailable
+        assert "worktree" in msg.lower() or "failed" in msg.lower()
 
     def test_worktree_warning_not_emitted_when_enabled(self, tmp_path):
         """With use_worktree=True the warning is suppressed regardless of git."""

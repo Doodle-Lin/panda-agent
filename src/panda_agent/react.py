@@ -119,6 +119,31 @@ def _check_doom_loop(tool_calls: list[dict]) -> bool:
     )
 
 
+class _EmptyContentTracker:
+    """Track consecutive empty-content native-FC responses to break loops.
+
+    Audit #8b: a model that returns empty content with prior tool_calls
+    could burn turns indefinitely — the loop kept appending "Continue..."
+    and incrementing the turn counter. Track the streak and break after
+    a small number of repeats. Two consecutive empties give the model one
+    more chance; a third triggers DONE-with-diagnostic so the outer loop
+    does not spin forever.
+    """
+
+    def __init__(self, *, threshold: int = 2) -> None:
+        self._streak = 0
+        self._threshold = threshold
+
+    def record_empty(self) -> None:
+        self._streak += 1
+
+    def record_non_empty(self) -> None:
+        self._streak = 0
+
+    def should_continue(self) -> bool:
+        return self._streak < self._threshold
+
+
 def _build_doom_loop_warning(tool_calls: list[dict]) -> str:
     """Build a contextual warning that helps the agent break out of a loop.
 
@@ -432,6 +457,9 @@ def run_react(
     had_repair = False
     result = ReActResult()
     trace = ExecutionTrace(task=task, total_turns=max_turns)
+    # Audit #8b: track consecutive empty-content native-FC responses so
+    # a persistently-empty model does not burn turns forever.
+    empty_content_tracker = _EmptyContentTracker()
 
     turn = 0
     while True:
@@ -591,10 +619,28 @@ def run_react(
             # a non-error response. If we already have tool_calls from this turn,
             # treat empty content as "continuing" rather than an error.
             if tool_calls:
-                _emit("llm_start", f"Turn {turn+1}/{max_turns} (continuing after tool calls)")
-                messages.append({"role": "assistant", "content": ""})
-                messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
-                continue
+                # Audit #8b: a model that persistently returns empty content
+                # with prior tool_calls could burn turns indefinitely. Track
+                # consecutive empties and break the loop after a small
+                # number rather than spinning until max_turns.
+                if empty_content_tracker.should_continue():
+                    empty_content_tracker.record_empty()
+                    _emit("llm_start", f"Turn {turn+1}/{max_turns} (continuing after tool calls)")
+                    messages.append({"role": "assistant", "content": ""})
+                    messages.append({"role": "user", "content": "Continue. Call a tool or say DONE."})
+                    continue
+                # Streak exhausted — emit DONE with a diagnostic so the
+                # outer loop does not spin forever.
+                _emit("failed", "Empty response streak — breaking loop")
+                trace.add_error(
+                    f"Turn {turn}: {empty_content_tracker._threshold+1} consecutive empty native-FC responses"
+                )
+                result.error = "Empty response streak: model kept returning empty content after tool calls"
+                result.tool_calls = tool_calls
+                result.turns = turn
+                trace.final_success = False
+                result.trace = trace
+                return result
             _emit("llm_error", "Empty response")
             trace.add_error("Empty LLM response")
             messages.append({"role": "assistant", "content": ""})

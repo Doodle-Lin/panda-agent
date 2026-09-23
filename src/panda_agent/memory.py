@@ -17,6 +17,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -129,6 +130,11 @@ class EmbeddedMemoryStore:
         self._emb_ids: list[str] | None = None
         self._emb_dirty = True
         self._embeddings_file = self.path.parent / "embeddings.npz"
+        # Audit #10c: guard the embedding write path against concurrent
+        # threads racing on np.savez. SQLite handles its own locking; the
+        # npz file does not. The lock covers _save_embeddings only — the
+        # SQLite write path uses its own connection.
+        self._embeddings_lock = threading.Lock()
 
     # -- Embedding infrastructure (lazy-loaded) -------------------------
 
@@ -209,15 +215,27 @@ class EmbeddedMemoryStore:
         self._save_embeddings()
 
     def _save_embeddings(self):
-        """Persist embeddings to npz file."""
+        """Persist embeddings to npz file atomically.
+
+        Audit #10c: a non-atomic np.savez can leave a half-written file
+        behind if a concurrent write races or the process is interrupted.
+        Write to a `.tmp` sibling then rename, so readers always see a
+        complete file. The lock guards against concurrent threads on the
+        same EmbeddedMemoryStore instance.
+        """
         if not _USE_EMBEDDING or not self._embeddings:
             return
-        try:
-            ids = list(self._embeddings.keys())
-            vecs = np.array([self._embeddings[i] for i in ids])
-            np.savez(self._embeddings_file, ids=np.array(ids), vectors=vecs)
-        except Exception as e:
-            print(f"[Memory] Embedding save failed: {e}", file=sys.stderr)
+        with self._embeddings_lock:
+            try:
+                ids = list(self._embeddings.keys())
+                vecs = np.array([self._embeddings[i] for i in ids])
+                tmp_file = self._embeddings_file.with_suffix(".npz.tmp")
+                np.savez(tmp_file, ids=np.array(ids), vectors=vecs)
+                # os.replace is atomic on the same filesystem on both POSIX
+                # and Windows; renames over the destination cleanly.
+                os.replace(tmp_file, self._embeddings_file)
+            except Exception as e:
+                print(f"[Memory] Embedding save failed: {e}", file=sys.stderr)
 
     # -- Connection management (unchanged from original) ---------------
 
@@ -244,12 +262,61 @@ class EmbeddedMemoryStore:
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:
+        """Create or migrate the schema. Idempotent.
+
+        Schema version is tracked in the `schema_meta` table. Each migration
+        bumps the version and adds any missing columns to an existing DB.
+        Without this, a DB created with an older schema (e.g. just
+        id/content) would fail on INSERT because columns added later
+        (normalized_content, title, tags_json, confidence, source_round,
+        access_count, last_accessed) do not exist.
+        """
+        # schema_meta must exist before we can read or write the version.
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """
+        )
+        # If the `nodes` table exists but is missing columns from an older
+        # schema, ALTER TABLE must run BEFORE the CREATE TABLE IF NOT EXISTS
+        # below — otherwise the CREATE-index statements (which reference
+        # node_type) fail on the pre-existing table.
+        existing_node_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(nodes)").fetchall()
+        }
+        if existing_node_columns and "node_type" not in existing_node_columns:
+            # This is an old-schema table — bring it up to the current shape
+            # by adding every missing column. CREATE TABLE IF NOT EXISTS
+            # will be a no-op after this; the index commands can run.
+            _column_adds = [
+                ("normalized_content", "TEXT NOT NULL DEFAULT ''"),
+                ("title", "TEXT NOT NULL DEFAULT ''"),
+                ("node_type", "TEXT NOT NULL DEFAULT 'knowledge'"),
+                ("source", "TEXT NOT NULL DEFAULT 'panda'"),
+                ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("confidence", "REAL NOT NULL DEFAULT 1.0"),
+                ("source_round", "INTEGER"),
+                ("access_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_accessed", "TEXT"),
+            ]
+            for col_name, col_def in _column_adds:
+                if col_name not in existing_node_columns:
+                    connection.execute(
+                        f"ALTER TABLE nodes ADD COLUMN {col_name} {col_def}"
+                    )
+
+        # Always ensure the canonical tables exist with their current shape.
+        # `CREATE TABLE IF NOT EXISTS` does not add missing columns to an
+        # existing table; the ALTER TABLE block above already handled that.
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT NOT NULL,
-                normalized_content TEXT NOT NULL,
+                normalized_content TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 node_type TEXT NOT NULL DEFAULT 'knowledge',
                 source TEXT NOT NULL DEFAULT 'panda',
@@ -275,13 +342,34 @@ class EmbeddedMemoryStore:
             CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
             """
         )
+        # Forward-only per-column migration on the canonical table too, so
+        # a partial schema (e.g. a manually-created table with some columns)
+        # is still brought up to date.
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(nodes)").fetchall()
         }
-        if "source" not in columns:
-            connection.execute(
-                "ALTER TABLE nodes ADD COLUMN source TEXT NOT NULL DEFAULT 'panda'"
-            )
+        _column_adds = [
+            ("normalized_content", "TEXT NOT NULL DEFAULT ''"),
+            ("title", "TEXT NOT NULL DEFAULT ''"),
+            ("node_type", "TEXT NOT NULL DEFAULT 'knowledge'"),
+            ("source", "TEXT NOT NULL DEFAULT 'panda'"),
+            ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("confidence", "REAL NOT NULL DEFAULT 1.0"),
+            ("source_round", "INTEGER"),
+            ("access_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_accessed", "TEXT"),
+        ]
+        for col_name, col_def in _column_adds:
+            if col_name not in columns:
+                connection.execute(
+                    f"ALTER TABLE nodes ADD COLUMN {col_name} {col_def}"
+                )
+        # Record the schema version. We bump it whenever the shape changes;
+        # the value is informational — migrations are column-additive.
+        connection.execute(
+            "INSERT INTO schema_meta (key, value) VALUES ('version', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
 
     @staticmethod
     def _row_to_result(row: sqlite3.Row, score: float = 0.0) -> dict[str, Any]:
@@ -323,12 +411,18 @@ class EmbeddedMemoryStore:
 
         normalized = " ".join(content.casefold().split())
         now = _utc_now()
+        # Audit #10d: explicit local instead of the fragile `'new_emb' not in
+        # dir()` check. The branch that did `pass` was dead code; we compute
+        # the embedding exactly once when needed.
+        new_emb: np.ndarray | None = None
 
         # Ensure embeddings are loaded
         if _USE_EMBEDDING and self._embeddings is None:
             self._load_embeddings()
 
         with self._connect() as connection:
+            # Audit #10b: filter by node_type in SQL — the `idx_nodes_type`
+            # index makes this O(log N) lookup rather than O(N) table scan.
             existing = connection.execute(
                 "SELECT * FROM nodes WHERE node_type = ?", (node.node_type,)
             ).fetchall()
@@ -405,14 +499,9 @@ class EmbeddedMemoryStore:
             )
             node_id = int(cursor.lastrowid)
 
-            # Compute embedding for new node
+            # Compute embedding for new node exactly once.
             if _USE_EMBEDDING:
-                if best_row is None and 'new_emb' not in dir():
-                    # best_row was None, but new_emb might not be computed yet
-                    # (only computed in layer 2 when there are existing nodes)
-                    pass
-                # Compute embedding if not already done
-                if 'new_emb' not in dir():
+                if new_emb is None:
                     new_emb = self._embed(content)
                 self._embeddings[str(node_id)] = new_emb
                 self._invalidate_emb_cache()
@@ -591,6 +680,7 @@ class EmbeddedMemory:
     """Compatibility facade over the local SQLite graph store."""
 
     _instance: EmbeddedMemory | None = None
+    _instance_lock = threading.Lock()
 
     def __init__(
         self,
@@ -605,15 +695,20 @@ class EmbeddedMemory:
 
     @classmethod
     def get(cls) -> EmbeddedMemory | None:
-        """Return the process singleton, recreating it when PANDA_HOME changes."""
-        desired = _default_storage_path().expanduser().resolve()
-        if cls._instance is None or cls._instance.path != desired:
-            try:
-                cls._instance = cls(storage_path=desired)
-            except Exception as error:
-                print(f"[Memory] Init failed: {error}", file=sys.stderr)
-                return None
-        return cls._instance
+        """Return the process singleton, recreating it when PANDA_HOME changes.
+
+        Audit #10c: the singleton creation path is guarded by a class-level
+        lock so concurrent first-callers don't race into two instances.
+        """
+        with cls._instance_lock:
+            desired = _default_storage_path().expanduser().resolve()
+            if cls._instance is None or cls._instance.path != desired:
+                try:
+                    cls._instance = cls(storage_path=desired)
+                except Exception as error:
+                    print(f"[Memory] Init failed: {error}", file=sys.stderr)
+                    return None
+            return cls._instance
 
     def write(
         self,

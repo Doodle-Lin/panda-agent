@@ -106,7 +106,14 @@ def load_tasks(path: Path) -> list[BenchmarkTask]:
 # ---------------------------------------------------------------------------
 
 def score_exact_match(task: BenchmarkTask, answer: str, workspace: Path) -> float:
-    """Deterministic: does the answer contain / avoid the required strings?"""
+    """Deterministic: does the answer contain / avoid the required strings?
+
+    Audit #9: the pre-fix returned 100.0 when ``contains`` was empty and
+    ``answer`` was non-empty, which made the gate vacuous — any answer
+    passed. An empty ``contains`` means the task defined no acceptance
+    strings, so the scorer cannot make a judgment; return 0.0 rather
+    than a default pass.
+    """
     text = (answer or "").lower()
     required = [s.lower() for s in _as_list(task.expected.get("contains"))]
     forbidden = [s.lower() for s in _as_list(task.expected.get("not_contains"))]
@@ -114,7 +121,11 @@ def score_exact_match(task: BenchmarkTask, answer: str, workspace: Path) -> floa
     if any(f in text for f in forbidden):
         return 0.0
     if not required:
-        return 100.0 if text.strip() else 0.0
+        # No acceptance strings defined: the scorer has no signal to score
+        # against, so the score is 0.0 (not a default pass). A task that
+        # wants any-non-empty-text-accepted must put a sentinel in
+        # ``contains`` or use a different scorer.
+        return 0.0
     hits = sum(1 for r in required if r in text)
     return 100.0 * hits / len(required)
 
