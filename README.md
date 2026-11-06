@@ -5,8 +5,16 @@ keeps a rewrite that measurably helped.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-374%20passing-brightgreen.svg)](#tests)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
+[![Status: Archived](https://img.shields.io/badge/status-archived-lightgrey.svg)](#project-status)
+
+> **⛔ Archived — no longer actively developed (2026-11).**
+> General-purpose coding agents are now served well by mature products, and
+> the measured gains from runtime self-evolution were real but small (see
+> [`docs/runs/`](docs/runs/)) — not enough to justify continued
+> single-maintainer investment. This repository is frozen as-is. What remains
+> valuable: the honest experiment records in [`docs/runs/`](docs/runs/), the
+> design post-mortem in [`docs/DESIGN.md`](docs/DESIGN.md), and the
+> falsifiable-verification approach they document. Forks welcome (MIT).
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -59,7 +67,7 @@ prompt hurt `recover_from_missing_file`: 100 → 0). See the
 
 ## Project Status
 
-**Alpha — working prototype, not production-ready.**
+**Archived (2026-11) — frozen as an alpha prototype; no longer maintained.**
 
 | Component | Status | Notes |
 |---|---|---|

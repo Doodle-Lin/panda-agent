@@ -13,7 +13,7 @@ from .memory import MemoryClient
 from .tui import TUI
 from .types import Task, ExecutionResult, Evaluation, ImprovementResult, EvolutionResult
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = [
     "Config", "load_config", "save_config",
     "call_llm", "call_llm_simple",

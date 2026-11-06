@@ -4,7 +4,13 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-365%20passing-brightgreen.svg)](#测试)
+[![Status: Archived](https://img.shields.io/badge/status-archived-lightgrey.svg)](#项目状态)
+
+> **⛔ 已归档 —— 自 2026 年 11 月起停止积极开发。**
+> 通用编码 Agent 已由成熟产品很好地满足，而运行时自进化的实测提升真实但有限
+> （见 [`docs/runs/`](docs/runs/)），不足以支撑单人维护者继续投入。本仓库按原样冻结。
+> 仍有价值的部分：`docs/runs/` 的诚实实验记录、[`docs/DESIGN.md`](docs/DESIGN.md)
+> 的设计复盘，以及其中记录的「可证伪验证」方法。欢迎 Fork（MIT）。
 
 [English](README.md) · **简体中文**
 
@@ -43,7 +49,7 @@
 
 ## 项目状态
 
-**Alpha —— 能跑的原型，不是生产就绪。**
+**已归档（2026-11）—— 冻结为 alpha 原型，不再维护。**
 
 | 组件 | 状态 | 说明 |
 |---|---|---|

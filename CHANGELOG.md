@@ -3,7 +3,13 @@
 All notable changes to PandaAgent. The format is based on
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.2.1] — 2026-11-06
+
+Final release. PandaAgent is now **archived**: general-purpose coding
+agents are served well by mature products, and the measured gains from
+runtime self-evolution were too small to justify continued
+single-maintainer development. The repository is frozen as-is; see
+`docs/runs/` for the honest experiment records.
 
 ### Added
 
@@ -14,6 +20,9 @@ All notable changes to PandaAgent. The format is based on
 
 - Updated English and Chinese documentation for the embedded SQLite graph
   memory, current test baseline, and the remaining self-evolution limitations.
+- Added an explicit archive notice to both READMEs and removed the stale
+  test-count badges.
+- Bumped the version to 0.2.1 for the final archived release.
 
 ## [0.2.0] — 2025
 
